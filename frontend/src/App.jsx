@@ -1,0 +1,205 @@
+/* 文件路径: frontend/src/assets/App.css */
+:root {
+  --background-color: #1a1a1a;
+  --card-background: #2a2a2a;
+  --text-color: #ffffffde;
+  --primary-color: #646cff;
+  --border-color: #535bf2;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--background-color);
+  color: var(--text-color);
+}
+
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Auth Pages */
+.auth-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 320px;
+}
+
+.auth-container input {
+  padding: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background-color: var(--card-background);
+  color: var(--text-color);
+  font-size: 1rem;
+}
+
+.auth-container button {
+  padding: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background-color: var(--primary-color);
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+
+.auth-container button:hover {
+  border-color: var(--border-color);
+}
+.auth-container p {
+  margin-top: 1rem;
+}
+.auth-container a {
+  color: var(--primary-color);
+}
+
+/* Home Page */
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background-color: var(--card-background);
+  border-radius: 8px;
+}
+
+.score-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.score-card {
+  padding: 3rem 1rem;
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  font-size: 2rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+.score-card:hover {
+  background-color: var(--primary-color);
+}
+
+/* Game Table */
+.game-table {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+.game-area {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem;
+}
+.action-bar {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  background-color: var(--card-background);
+  justify-content: center;
+}
+.action-bar button {
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  /* (styles from .auth-container button) */
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background-color: var(--primary-color);
+  color: white;
+  cursor: pointer;
+}
+.action-bar button:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+}
+
+
+/* Card Row */
+.card-row {
+  border: 2px dashed #444;
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: rgba(0,0,0,0.2);
+}
+.card-row.over {
+  border-color: var(--primary-color);
+  background-color: rgba(100, 108, 255, 0.1);
+}
+.card-row-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #777;
+  margin-right: 1rem;
+}
+
+/* Card */
+.card {
+  width: 60px;
+  height: 90px;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+.card img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.card.dragging {
+  opacity: 0.5;
+}import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import GameTable from './pages/GameTable';
+import ProtectedRoute from './components/ProtectedRoute';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route 
+          path="/" 
+          element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/game/:score" 
+          element={
+            <ProtectedRoute>
+              <GameTable />
+            </ProtectedRoute>
+          } 
+        />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
