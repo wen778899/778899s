@@ -1,58 +1,88 @@
-// 文件路径: frontend/src/App.jsx
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { HashRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
+import { api } from './api';
+import './index.css';
 
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Home from './pages/Home';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import GameTable from './pages/GameTable';
-import ProtectedRoute from './components/ProtectedRoute';
+// 页面组件导入 (你可以把这些代码分文件，这里为了展示放在一起)
+import AuthPage from './pages/AuthPage';
+import HomePage from './pages/HomePage';
+import EmailsPage from './pages/EmailsPage';
 
-/**
- * 应用的主组件，负责设置路由规则。
- */
+const AuthContext = createContext(null);
+
+export const useAuth = () => useContext(AuthContext);
+
 function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.checkSession()
+      .then(res => {
+        if (res.isAuthenticated) setUser(res.user);
+      })
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const login = async (email, password) => {
+    const res = await api.login(email, password);
+    if (res.status === 'success') setUser(res.user);
+    return res;
+  };
+
+  const logout = () => {
+    api.logout().then(() => setUser(null));
+  };
+
+  if (loading) return <div className="loading-screen">系统加载中...</div>;
+
   return (
-    // BrowserRouter 提供了客户端路由能力
-    <BrowserRouter>
-      {/* Routes 组件包裹了所有的路由规则 */}
-      <Routes>
-        {/* 当URL是 /login 时，渲染Login页面 */}
-        <Route path="/login" element={<Login />} />
-        
-        {/* 当URL是 /register 时，渲染Register页面 */}
-        <Route path="/register" element={<Register />} />
-        
-        {/* 
-          当URL是根路径 / 时，渲染Home页面。
-          ProtectedRoute 组件会先检查用户是否已登录，
-          如果未登录，会自动重定向到 /login 页面。
-        */}
-        <Route 
-          path="/" 
-          element={
-            <ProtectedRoute>
-              <Home />
-            </ProtectedRoute>
-          } 
-        />
-        
-        {/* 
-          当URL匹配 /game/:score 模式时（如 /game/2, /game/10），渲染GameTable页面。
-          :score 是一个动态参数，可以在GameTable组件中获取。
-          这个路由同样受 ProtectedRoute 保护。
-        */}
-        <Route 
-          path="/game/:score" 
-          element={
-            <ProtectedRoute>
-              <GameTable />
-            </ProtectedRoute>
-          } 
-        />
-      </Routes>
-    </BrowserRouter>
+    <AuthContext.Provider value={{ user, login, logout }}>
+      <HashRouter>
+        <div className="app-container">
+          <NavBar />
+          <main>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/emails" element={
+                <RequireAuth><EmailsPage /></RequireAuth>
+              } />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </HashRouter>
+    </AuthContext.Provider>
   );
 }
 
-// 导出App组件，以便在其他文件中使用
+function NavBar() {
+  const { user, logout } = useAuth();
+  return (
+    <nav className="navbar">
+      <div className="brand">
+        <Link to="/">📊 结算系统</Link>
+      </div>
+      <div className="links">
+        {user ? (
+          <>
+            <Link to="/emails">邮件</Link>
+            <button onClick={logout} className="btn-text">退出</button>
+          </>
+        ) : (
+          <Link to="/auth">登录</Link>
+        )}
+      </div>
+    </nav>
+  );
+}
+
+function RequireAuth({ children }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/auth" replace />;
+  return children;
+}
+
 export default App;
