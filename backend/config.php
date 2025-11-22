@@ -1,30 +1,33 @@
 <?php
 // backend/config.php
-ini_set('display_errors', 0); // 生产环境关闭回显，避免破坏 JSON
+ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
-// 定义前端域名，用于 CORS
-define('FRONTEND_ORIGIN', 'http://88.9526.ip-ddns.com');
+// 定义前端域名
+define('FRONTEND_ORIGIN', 'https://88.9526.ip-ddns.com'); // 注意这里改成 https
 
 function handle_cors() {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    
     // 允许的来源列表
     $allowed_origins = [
         FRONTEND_ORIGIN,
-        'http://localhost:5173', // 本地开发
-        'http://localhost',      // 安卓模拟器
-        'capacitor://localhost'  // 打包后的APP
+        'http://localhost:5173',
+        'http://localhost',
+        'capacitor://localhost'
     ];
 
-    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-
-    if (in_array($origin, $allowed_origins)) {
-        header("Access-Control-Allow-Origin: $origin");
+    // 如果通过 Cloudflare Worker 代理，HTTP_ORIGIN 可能是前端域名
+    // 我们总是允许
+    if (in_array($origin, $allowed_origins) || empty($origin)) {
+        if (!empty($origin)) {
+            header("Access-Control-Allow-Origin: $origin");
+        }
         header('Access-Control-Allow-Credentials: true');
         header('Access-Control-Max-Age: 86400');
     }
 
-    // 处理预检请求
     if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
         if (isset($_SERVER['HTTP_ACCESS_CONTROL_REQUEST_METHOD']))
             header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
@@ -34,33 +37,29 @@ function handle_cors() {
     }
 }
 
-// 数据库连接
 function get_db_connection() {
     static $pdo = null;
     if ($pdo === null) {
-        // 读取 .env 文件
+        // 读取 .env
         $envPath = __DIR__ . '/.env';
         if (!file_exists($envPath)) {
-            die(json_encode(['status'=>'error', 'message'=>'.env file not found']));
+             // 如果找不到 .env，尝试上级目录或者报错
+             // 针对 serv00 路径可能是 /home/user/domains/domain/public_html/backend/.env
+             die(json_encode(['status'=>'error', 'message'=>'Config file not found']));
         }
         $env = parse_ini_file($envPath);
         
-        $host = $env['DB_HOST'];
-        $port = $env['DB_PORT'];
-        $db   = $env['DB_DATABASE'];
-        $user = $env['DB_USERNAME'];
-        $pass = $env['DB_PASSWORD'];
+        $host = $env['DB_HOST'] ?? 'localhost';
+        $port = $env['DB_PORT'] ?? '3306';
+        $db   = $env['DB_DATABASE'] ?? '';
+        $user = $env['DB_USERNAME'] ?? '';
+        $pass = $env['DB_PASSWORD'] ?? '';
 
         $dsn = "mysql:host=$host;port=$port;dbname=$db;charset=utf8mb4";
-        try {
-            $pdo = new PDO($dsn, $user, $pass, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-            ]);
-        } catch (PDOException $e) {
-            // 不要输出具体错误，防止泄露密码
-            die(json_encode(['status'=>'error', 'message'=>'Database Connection Error']));
-        }
+        $pdo = new PDO($dsn, $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+        ]);
     }
     return $pdo;
 }
