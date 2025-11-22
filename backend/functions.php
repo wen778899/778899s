@@ -1,7 +1,11 @@
 <?php
 // backend/functions.php
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/db_operations.php'; // <--- 必须加上这一行！
+require_once __DIR__ . '/db_operations.php';
+// 引入规则文件，如果文件不存在则忽略（防止报错），但显示会受影响
+if (file_exists(__DIR__ . '/lottery/rules.php')) {
+    require_once __DIR__ . '/lottery/rules.php';
+}
 
 function json_response($data, $status = 200) {
     http_response_code($status);
@@ -10,7 +14,6 @@ function json_response($data, $status = 200) {
     exit;
 }
 
-// 身份验证
 function check_auth() {
     if (session_status() === PHP_SESSION_NONE) {
         session_set_cookie_params([
@@ -37,7 +40,6 @@ function login($email, $password) {
 
     if ($user && password_verify($password, $user['password_hash'])) {
         if ($user['status'] === 'banned') json_response(['status' => 'error', 'message' => '账户已封禁'], 403);
-        
         if (session_status() === PHP_SESSION_NONE) session_start();
         $_SESSION['user_id'] = $user['id'];
         return ['status' => 'success', 'user' => ['id' => $user['id'], 'email' => $email]];
@@ -66,6 +68,7 @@ function get_emails($user_id) {
     return ['status' => 'success', 'data' => $stmt->fetchAll()];
 }
 
+// 【关键修改】获取开奖结果并自动补全波色/生肖
 function get_lottery_results() {
     $pdo = get_db_connection();
     $sql = "SELECT r1.* FROM lottery_results r1 
@@ -78,15 +81,37 @@ function get_lottery_results() {
     $types = ['香港六合彩', '新澳门六合彩', '老澳门六合彩'];
     
     foreach($rows as $row) {
-        $row['winning_numbers'] = json_decode($row['winning_numbers']);
-        $row['zodiac_signs'] = json_decode($row['zodiac_signs']);
-        $row['colors'] = json_decode($row['colors']);
+        // 1. 解码基础数据
+        $numbers = json_decode($row['winning_numbers'], true);
+        if (!is_array($numbers)) $numbers = [];
+        
+        // 2. 强制重新计算波色和生肖 (保证数据准确)
+        // 即使数据库里有数据，也重新算一遍，防止数据库存的是"未知"
+        $colors = [];
+        $zodiacs = [];
+        
+        if (function_exists('get_color_by_number')) {
+            foreach ($numbers as $num) {
+                $colors[] = get_color_by_number($num);
+                $zodiacs[] = get_zodiac_by_number($num);
+            }
+        } else {
+            // 降级处理：如果规则文件没加载，使用数据库原数据
+            $colors = json_decode($row['colors'], true) ?? [];
+            $zodiacs = json_decode($row['zodiac_signs'], true) ?? [];
+        }
+
+        $row['winning_numbers'] = $numbers;
+        $row['colors'] = $colors;
+        $row['zodiac_signs'] = $zodiacs;
+        
         $data[$row['lottery_type']] = $row;
     }
-    // 确保所有类型都有键，方便前端遍历
+    
     foreach($types as $t) {
         if (!isset($data[$t])) $data[$t] = null;
     }
+    
     return ['status' => 'success', 'data' => $data];
 }
 ?>
