@@ -3,150 +3,176 @@ require_once 'ZodiacManager.php';
 
 class LotteryLogic {
     
-    // 基础打分计算器
-    private static function calculateScores($history, $weights) {
+    /**
+     * 核心辅助：获取数字特征
+     */
+    private static function getNumFeatures($num) {
+        $n = intval($num);
+        return [
+            'tail' => $n % 10, // 尾数
+            'head' => floor($n / 10), // 头数
+            'zodiac' => ZodiacManager::getInfo($n)['zodiac'],
+            'color' => ZodiacManager::getInfo($n)['color'],
+            'element' => ZodiacManager::getInfo($n)['element']
+        ];
+    }
+
+    /**
+     * 策略 A: 尾数追踪法 (Tail Tracking)
+     * 统计最近 7 个号码的尾数热度，推算下期特码尾数
+     */
+    private static function scoreByTail($history, &$scores) {
+        $zodiacMap = ZodiacManager::getMapping();
+        $tailCounts = array_fill(0, 10, 0);
+
+        // 统计最近 5 期的所有号码(平码+特码)的尾数
+        for ($i = 0; $i < 5; $i++) {
+            $row = $history[$i];
+            for ($j = 1; $j <= 6; $j++) $tailCounts[$row["n$j"] % 10]++;
+            $tailCounts[$row['spec'] % 10] += 2; // 特码尾数权重加倍
+        }
+
+        // 找出最热的 3 个尾数
+        arsort($tailCounts);
+        $hotTails = array_slice(array_keys($tailCounts), 0, 3);
+
+        // 给符合热尾数的生肖加分
+        foreach ($scores as $z => $s) {
+            $nums = $zodiacMap[$z];
+            foreach ($nums as $n) {
+                if (in_array($n % 10, $hotTails)) {
+                    $scores[$z] += 2; // 命中热尾加分
+                }
+            }
+        }
+    }
+
+    /**
+     * 策略 B: 五行缺失回补法 (Element Missing)
+     * 统计上一期 7 个号码的五行，找出没出现的五行，下期特码极大可能就是它
+     */
+    private static function scoreByElement($history, &$scores) {
+        $lastRow = $history[0];
+        $existElements = [];
+        
+        // 收集上期出现过的五行
+        for ($j = 1; $j <= 6; $j++) {
+            $existElements[] = ZodiacManager::getInfo($lastRow["n$j"])['element'];
+        }
+        $existElements[] = ZodiacManager::getInfo($lastRow['spec'])['element'];
+        $existElements = array_unique($existElements);
+
+        // 定义所有五行
+        $allElements = ['金', '木', '水', '火', '土'];
+        
+        // 找出缺失的五行
+        $missing = array_diff($allElements, $existElements);
+
+        // 给缺失五行的生肖加巨分
+        $zodiacMap = ZodiacManager::getMapping();
+        foreach ($scores as $z => $s) {
+            $nums = $zodiacMap[$z];
+            foreach ($nums as $n) {
+                $e = ZodiacManager::getInfo($n)['element'];
+                if (in_array($e, $missing)) {
+                    $scores[$z] += 3; // 缺失回补权重很高
+                    break; 
+                }
+            }
+        }
+    }
+
+    /**
+     * 策略 C: 头数跟随法 (Head Following)
+     * 如果上期平码多为 2头(20-29)，下期特码容易开 2头
+     */
+    private static function scoreByHead($history, &$scores) {
+        $lastRow = $history[0];
+        $headCounts = array_fill(0, 5, 0); // 0-4头
+
+        for ($j = 1; $j <= 6; $j++) {
+            $h = floor($lastRow["n$j"] / 10);
+            $headCounts[$h]++;
+        }
+        
+        arsort($headCounts);
+        $hotHead = array_key_first($headCounts); // 最热头数
+
+        $zodiacMap = ZodiacManager::getMapping();
+        foreach ($scores as $z => $s) {
+            $nums = $zodiacMap[$z];
+            foreach ($nums as $n) {
+                if (floor($n / 10) == $hotHead) {
+                    $scores[$z] += 1.5;
+                }
+            }
+        }
+    }
+
+    /**
+     * 策略 D: 综合走势 (Classic Trend)
+     * 保留之前的经典热度分析，作为保底
+     */
+    private static function scoreByTrend($history, &$scores) {
+        for ($i = 0; $i < 20; $i++) {
+            $z = ZodiacManager::getInfo($history[$i]['spec'])['zodiac'];
+            $scores[$z] += 2; // 简单热度
+        }
+    }
+
+    /**
+     * 杀号逻辑 (Killer)
+     * 杀掉上一期的特码生肖 (连庄概率其实很低，杀掉它是大概率正确的)
+     */
+    private static function applyKiller($history, &$scores) {
+        $lastZ = ZodiacManager::getInfo($history[0]['spec'])['zodiac'];
+        $scores[$lastZ] -= 10; // 大幅扣分，变相杀肖
+        return $lastZ;
+    }
+
+    /**
+     * 主预测入口
+     */
+    public static function predict($history) {
+        if (count($history) < 10) return []; // 数据太少不算
+
         $zodiacMap = ZodiacManager::getMapping();
         $allZodiacs = array_keys($zodiacMap);
         $scores = array_fill_keys($allZodiacs, 0);
 
-        // 统计各项属性的出现次数 (用于平衡分析)
-        $stats = [
-            'jy' => ['家禽'=>0, '野兽'=>0],
-            'td' => ['天肖'=>0, '地肖'=>0],
-            'yy' => ['阴肖'=>0, '阳肖'=>0],
-            'jx' => ['吉肖'=>0, '凶肖'=>0]
-        ];
+        // --- 执行多维分析 ---
+        self::scoreByTail($history, $scores);    // 尾数维度
+        self::scoreByElement($history, $scores); // 五行维度
+        self::scoreByHead($history, $scores);    // 头数维度
+        self::scoreByTrend($history, $scores);   // 历史维度
         
-        // 1. 遍历历史数据
-        $limitMid = min(count($history), 30);
-        for ($i = 0; $i < $limitMid; $i++) {
-            $info = ZodiacManager::getInfo($history[$i]['spec']);
-            $z = $info['zodiac'];
-            
-            // 热度加分
-            $scores[$z] += ($i < 10) ? $weights['trend_short'] : $weights['trend_mid'];
-            
-            // 统计属性 (取近20期)
-            if ($i < 20) {
-                if(isset($info['jy'])) $stats['jy'][$info['jy']]++;
-                if(isset($info['td'])) $stats['td'][$info['td']]++;
-                if(isset($info['yy'])) $stats['yy'][$info['yy']]++;
-                if(isset($info['jx'])) $stats['jx'][$info['jx']]++;
-            }
-        }
+        // --- 杀号 ---
+        $killed = self::applyKiller($history, $scores);
 
-        // 2. 遗漏加分
-        foreach ($allZodiacs as $z) {
-            $omission = 0;
-            foreach ($history as $row) {
-                if (ZodiacManager::getInfo($row['spec'])['zodiac'] === $z) break;
-                $omission++;
-            }
-            $scores[$z] += floor($omission / 10) * $weights['omission'];
-        }
-
-        // 3. 规律加分 (连庄/三合六合)
-        if (isset($history[0])) {
-            $lastZ = ZodiacManager::getInfo($history[0]['spec'])['zodiac'];
-            $scores[$lastZ] += $weights['repeat'];
-            foreach (ZodiacManager::getRelatedZodiacs($lastZ) as $rz) {
-                $scores[$rz] += $weights['relation'];
-            }
-        }
-        
-        // 4. 平衡理论加分 (Balance Theory)
-        // 核心逻辑：如果“阳肖”出太多了，下期“阴肖”概率大，给所有阴肖加分
-        foreach ($stats as $type => $counts) {
-            asort($counts); // 升序，第一个是弱势方
-            $weakest = array_key_first($counts);
-            
-            // 权重 key 映射: jy -> balance_jy
-            $wKey = 'balance_' . $type; 
-            
-            // 给所有属于弱势方的生肖加分
-            foreach ($allZodiacs as $z) {
-                $attrs = ZodiacManager::getAttr($z);
-                if (isset($attrs[$type]) && $attrs[$type] === $weakest) {
-                    $scores[$z] += $weights[$wKey];
-                }
-            }
-        }
-
-        return $scores;
-    }
-
-    // AI 回测寻优
-    private static function findBestWeights($fullHistory) {
-        // 定义策略池 (不同维度的侧重)
-        $strategies = [
-            '趋势均衡型' => ['trend_short'=>3, 'trend_mid'=>1, 'omission'=>2, 'repeat'=>2, 'relation'=>3, 'balance_jy'=>1, 'balance_td'=>1, 'balance_yy'=>1, 'balance_jx'=>1],
-            '冷门回补型' => ['trend_short'=>0.5, 'trend_mid'=>0.5, 'omission'=>4, 'repeat'=>0, 'relation'=>1, 'balance_jy'=>2, 'balance_td'=>2, 'balance_yy'=>2, 'balance_jx'=>2],
-            '阴阳风水型' => ['trend_short'=>1, 'trend_mid'=>1, 'omission'=>1, 'repeat'=>1, 'relation'=>1, 'balance_jy'=>0, 'balance_td'=>4, 'balance_yy'=>4, 'balance_jx'=>0], // 侧重天地阴阳
-            '吉凶生肖型' => ['trend_short'=>1, 'trend_mid'=>1, 'omission'=>1, 'repeat'=>1, 'relation'=>1, 'balance_jy'=>0, 'balance_td'=>0, 'balance_yy'=>0, 'balance_jx'=>4], // 侧重吉凶
-            '三合连庄型' => ['trend_short'=>1, 'trend_mid'=>1, 'omission'=>1, 'repeat'=>3, 'relation'=>5, 'balance_jy'=>0.5, 'balance_td'=>0.5, 'balance_yy'=>0.5, 'balance_jx'=>0.5],
-        ];
-
-        $bestStrategy = '趋势均衡型';
-        $maxHits = -1;
-
-        $testCount = min(count($fullHistory) - 30, 20); // 回测近20期
-        
-        foreach ($strategies as $name => $w) {
-            $hits = 0;
-            for ($i = 0; $i < $testCount; $i++) {
-                $mockHistory = array_slice($fullHistory, $i + 1); 
-                $actualResult = ZodiacManager::getInfo($fullHistory[$i]['spec'])['zodiac'];
-                
-                $scores = self::calculateScores($mockHistory, $w);
-                arsort($scores);
-                $top6 = array_slice(array_keys($scores), 0, 6);
-                
-                if (in_array($actualResult, $top6)) $hits++;
-            }
-            if ($hits > $maxHits) {
-                $maxHits = $hits;
-                $bestStrategy = $name;
-            }
-        }
-
-        return ['name' => $bestStrategy, 'weights' => $strategies[$bestStrategy]];
-    }
-
-    public static function predict($history) {
-        if (count($history) < 50) {
-            $weights = ['trend_short'=>3, 'trend_mid'=>1, 'omission'=>2, 'repeat'=>2, 'relation'=>3, 'balance_jy'=>1, 'balance_td'=>1, 'balance_yy'=>1, 'balance_jx'=>1];
-            $strategyName = "基础型(样本不足)";
-        } else {
-            $best = self::findBestWeights($history);
-            $weights = $best['weights'];
-            $strategyName = $best['name'];
-        }
-
-        $scores = self::calculateScores($history, $weights);
+        // --- 排序输出 ---
         arsort($scores);
-        $rankedZodiacs = array_keys($scores);
+        $ranked = array_keys($scores);
 
-        $sixXiao = array_slice($rankedZodiacs, 0, 6);
-        $threeXiao = array_slice($rankedZodiacs, 0, 3);
-        
-        // 波色推算
-        $zodiacMap = ZodiacManager::getMapping();
-        $waveScores = ['red'=>0, 'blue'=>0, 'green'=>0];
+        $sixXiao = array_slice($ranked, 0, 6);
+        $threeXiao = array_slice($ranked, 0, 3);
+
+        // --- 波色推算 (基于预测结果的前6肖所含号码的波色统计) ---
+        $waveCounts = ['red'=>0, 'blue'=>0, 'green'=>0];
         foreach ($sixXiao as $z) {
             $nums = $zodiacMap[$z];
-            foreach($nums as $n) {
-                $c = ZodiacManager::getInfo($n)['color'];
-                $waveScores[$c] += $scores[$z]; // 加权波色
+            foreach ($nums as $n) {
+                $info = ZodiacManager::getInfo($n);
+                $waveCounts[$info['color']]++;
             }
         }
-        arsort($waveScores);
-        $waves = array_keys($waveScores);
+        arsort($waveCounts);
+        $waves = array_keys($waveCounts);
 
         return [
             'six_xiao' => $sixXiao,
             'three_xiao' => $threeXiao,
             'color_wave' => ['primary'=>$waves[0], 'secondary'=>$waves[1]],
-            'strategy_used' => $strategyName
+            'strategy_used' => "全维特征流 | 杀:{$killed}"
         ];
     }
 }
