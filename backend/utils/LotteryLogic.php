@@ -4,8 +4,8 @@ require_once 'ZodiacManager.php';
 class LotteryLogic {
     
     /**
-     * 高级多维加权预测引擎
-     * 结合：历史热度 + 遗漏回补 + 规律模板 + 波色平衡
+     * 高级多维加权预测引擎 (v2.0)
+     * 新增：精选三肖、双波色推荐、波色权重与生肖联动
      */
     public static function predict($history) {
         if (empty($history)) return [];
@@ -17,8 +17,9 @@ class LotteryLogic {
         $scores = [];
         foreach ($allZodiacs as $z) $scores[$z] = 0;
 
-        // --- 1. 热度分析 (Trend Analysis) - 权重 30% ---
-        // 统计最近 10期(短期) 和 30期(中期) 的出现频率
+        // =============================================
+        // 维度 1: 热度分析 (Trend) - 权重 35%
+        // =============================================
         $limitShort = min(count($history), 10);
         $limitMid = min(count($history), 30);
         
@@ -28,14 +29,15 @@ class LotteryLogic {
             $z = $info['zodiac'];
 
             if ($i < $limitShort) {
-                $scores[$z] += 3; // 近10期出现，加高分 (追热)
+                $scores[$z] += 3.5; // 近10期出现，极热
             } else {
-                $scores[$z] += 1; // 10-30期出现，加低分
+                $scores[$z] += 1.2; // 10-30期出现，温热
             }
         }
 
-        // --- 2. 遗漏值分析 (Omission) - 权重 20% ---
-        // 寻找很久没出的生肖 (博反弹)
+        // =============================================
+        // 维度 2: 遗漏值分析 (Omission) - 权重 25%
+        // =============================================
         foreach ($allZodiacs as $z) {
             $omissionCount = 0;
             foreach ($history as $row) {
@@ -43,73 +45,102 @@ class LotteryLogic {
                 if ($info['zodiac'] === $z) break;
                 $omissionCount++;
             }
-            // 遗漏每超过10期，加 2 分
-            $scores[$z] += floor($omissionCount / 10) * 2;
+            // 遗漏补偿算法：遗漏越大，反弹分越高
+            $scores[$z] += floor($omissionCount / 12) * 2.5;
         }
 
-        // --- 3. 规律模板匹配 (Pattern Templates) - 权重 30% ---
-        // 基于上一期结果，推算下一期
+        // =============================================
+        // 维度 3: 规律模板 (Pattern) - 权重 30%
+        // =============================================
         if (isset($history[0])) {
             $lastRow = $history[0];
             $lastInfo = ZodiacManager::getInfo($lastRow['spec']);
             $lastZodiac = $lastInfo['zodiac'];
 
-            // A. 连庄规律 (上期开啥，下期还开啥)
-            // 历史统计显示连庄概率约为 10%
+            // 连庄 (Repeat)
             $scores[$lastZodiac] += 2; 
 
-            // B. 三合六合规律 (最强规律)
-            // 如果上期是龙，下期开 鼠/猴/鸡 的概率极高
+            // 三合六合 (Harmony)
             $related = ZodiacManager::getRelatedZodiacs($lastZodiac);
             foreach ($related as $relZ) {
-                $scores[$relZ] += 4; // 关联生肖大幅加分
+                $scores[$relZ] += 4; 
             }
         }
 
-        // --- 4. 波色平衡分析 (Color Balance) - 权重 20% ---
-        // 统计近20期波色，找出弱势波色进行回补
-        $colorStats = ['red'=>0, 'blue'=>0, 'green'=>0];
+        // =============================================
+        // 维度 4: 波色平衡 (Color Balance) - 权重 10%
+        // =============================================
+        // 统计近期波色，给弱势波色生肖微调加分
+        $colorCounts = ['red'=>0, 'blue'=>0, 'green'=>0];
         $limitColor = min(count($history), 20);
         for ($i = 0; $i < $limitColor; $i++) {
             $info = ZodiacManager::getInfo($history[$i]['spec']);
-            if (isset($colorStats[$info['color']])) $colorStats[$info['color']]++;
+            if (isset($colorCounts[$info['color']])) $colorCounts[$info['color']]++;
         }
+        asort($colorCounts);
+        $weakestColor = array_key_first($colorCounts);
         
-        // 找出出现次数最少的波色 (弱势波色)
-        asort($colorStats);
-        $weakestColor = array_key_first($colorStats);
-        
-        // 给属于该弱势波色的所有数字对应的生肖加分
-        // 注意：一个生肖有多个数字，只要有一个数字属于该波色，就加分
         foreach ($allZodiacs as $z) {
+            // 如果该生肖包含弱势波色的号码，略微加分
             $nums = $zodiacMap[$z];
             foreach ($nums as $n) {
-                $c = ZodiacManager::getInfo($n)['color'];
-                if ($c === $weakestColor) {
-                    $scores[$z] += 2; // 波色回补加分
-                    break; // 该生肖加一次即可
+                if (ZodiacManager::getInfo($n)['color'] === $weakestColor) {
+                    $scores[$z] += 1.5;
+                    break; 
                 }
             }
         }
 
-        // --- 5. 最终结算 ---
-        // 按分数降序排列
+        // =============================================
+        // 结算: 生肖排名
+        // =============================================
         arsort($scores);
+        $rankedZodiacs = array_keys($scores);
         
-        // 取前 6 名
-        $sixXiao = array_slice(array_keys($scores), 0, 6);
+        // 1. 获取六肖 (基础防线)
+        $sixXiao = array_slice($rankedZodiacs, 0, 6);
+        
+        // 2. 获取三肖 (核心重点) - 直接取分数最高的前3名
+        $threeXiao = array_slice($rankedZodiacs, 0, 3);
 
-        // 预测波色：直接取分数最高的生肖对应的波色，或者取回补波色
-        // 这里策略是：取 Top1 生肖的主波色
-        $topZodiac = $sixXiao[0];
-        // 找到该生肖下最热的波色
-        $topZodiacNums = $zodiacMap[$topZodiac];
-        $bestColor = ZodiacManager::getInfo($topZodiacNums[0])['color'];
+        // =============================================
+        // 结算: 波色预测 (基于生肖分数的加权)
+        // =============================================
+        // 逻辑：如果预测的生肖大部分是红波，那我们就有理由推红波
+        $waveScores = ['red'=>0, 'blue'=>0, 'green'=>0];
+        
+        // 取前 6 名生肖，将其分数贡献给对应的波色
+        // 注意：一个生肖包含多种波色，需要按该生肖下的号码波色比例分配
+        foreach ($sixXiao as $index => $z) {
+            $zScore = $scores[$z]; // 该生肖的总分
+            $nums = $zodiacMap[$z];
+            
+            // 简单化：获取该生肖的主波色（拥有号码最多的波色）
+            $zColorCounts = ['red'=>0, 'blue'=>0, 'green'=>0];
+            foreach ($nums as $n) {
+                $c = ZodiacManager::getInfo($n)['color'];
+                $zColorCounts[$c]++;
+            }
+            arsort($zColorCounts);
+            $mainColor = array_key_first($zColorCounts);
+            
+            // 排名越靠前，对波色贡献越大
+            $waveScores[$mainColor] += ($zScore * (1 - $index * 0.1));
+        }
 
+        // 排序波色得分
+        arsort($waveScores);
+        $rankedWaves = array_keys($waveScores);
+
+        // 返回前两名波色
         return [
-            'six_xiao' => $sixXiao,
-            'color_wave' => $bestColor,
-            'scores_debug' => array_slice($scores, 0, 6) // 调试用，看谁分高
+            'six_xiao'   => $sixXiao,
+            'three_xiao' => $threeXiao, // 新增
+            'color_wave' => [           // 改为数组：[主, 防]
+                'primary'   => $rankedWaves[0],
+                'secondary' => $rankedWaves[1]
+            ],
+            'debug_scores' => array_slice($scores, 0, 6)
         ];
     }
 }

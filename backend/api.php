@@ -21,7 +21,7 @@ try {
     $pdo = Db::connect();
 
     if ($action === 'get_data') {
-        // 1. 获取历史记录 (展示用，前50条)
+        // 1. 获取历史
         $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 50");
         $history = $stmt->fetchAll();
 
@@ -30,7 +30,6 @@ try {
             $nums = [];
             for($i=1; $i<=6; $i++) $nums[] = ZodiacManager::getInfo($row["n$i"]);
             $specInfo = ZodiacManager::getInfo($row['spec']);
-            
             $processedHistory[] = [
                 'id' => $row['id'],
                 'issue' => $row['issue'],
@@ -40,12 +39,11 @@ try {
             ];
         }
 
-        // 2. 获取预测结果
+        // 2. 获取预测
         $savedJson = Settings::get('current_prediction');
         if ($savedJson) {
             $prediction = json_decode($savedJson, true);
         } else {
-            // 如果没有存档，取 100 条历史进行深度分析
             $fullStmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
             $fullHistory = $fullStmt->fetchAll();
             $prediction = LotteryLogic::predict($fullHistory);

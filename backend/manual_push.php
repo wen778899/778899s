@@ -1,9 +1,5 @@
 <?php
-// 此文件由 Webhook 引用执行，或命令行执行
-if (!defined('ABSPATH') && !isset($argc) && !isset($update)) {
-    // 简单的防直接访问保护
-    // 实际使用中由 webhook include 即可
-}
+if (!defined('ABSPATH') && !isset($argc) && !isset($update)) {}
 
 require_once 'utils/Env.php';
 require_once 'utils/Db.php';
@@ -29,38 +25,45 @@ function broadcastMsg($text) {
 
 try {
     $pdo = Db::connect();
-    
-    // 1. 获取最新期号
     $stmt = $pdo->query("SELECT issue FROM lottery_records ORDER BY issue DESC LIMIT 1");
     $row = $stmt->fetch();
     if (!$row) return; 
     $nextIssue = $row['issue'] + 1;
 
-    // 2. 读取已生成的预测 (确保唯一性)
     $json = Settings::get('current_prediction');
-    if (!$json) return; // 没预测就不发
+    if (!$json) return;
     
     $pred = json_decode($json, true);
 
-    // 3. 构建文案
     $sxEmoji = ['鼠'=>'🐀','牛'=>'🐂','虎'=>'🐅','兔'=>'🐇','龙'=>'🐉','蛇'=>'🐍','马'=>'🐎','羊'=>'🐏','猴'=>'🐒','鸡'=>'🐓','狗'=>'🐕','猪'=>'🐖'];
-    $sixXiaoStr = "";
-    foreach ($pred['six_xiao'] as $sx) {
-        $sixXiaoStr .= ($sxEmoji[$sx]??'') . "*{$sx}*  ";
-    }
-    
-    $colorMap = ['red'=>'🔴 红波', 'blue'=>'🔵 蓝波', 'green'=>'🟢 绿波'];
-    $waveStr = $colorMap[$pred['color_wave']] ?? '';
+    $cMap = ['red'=>'🔴红','blue'=>'🔵蓝','green'=>'🟢绿'];
 
-    $msg = "🔮 *第 {$nextIssue} 期 智能算法预测* 🔮\n\n";
-    $msg .= "🦁 *六肖推荐*：\n{$sixXiaoStr}\n\n";
-    $msg .= "🌊 *主攻波色*：\n{$waveStr}\n\n";
+    $sixStr = "";
+    foreach ($pred['six_xiao'] as $sx) $sixStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
+    
+    // 如果算法版本较旧没有 three_xiao，则截取前三个
+    $threeXiao = $pred['three_xiao'] ?? array_slice($pred['six_xiao'], 0, 3);
+    $threeStr = "";
+    foreach ($threeXiao as $sx) $threeStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
+
+    // 兼容旧版波色格式 (如果是字符串转为数组)
+    if (is_string($pred['color_wave'])) {
+        $wave1 = $cMap[$pred['color_wave']] ?? '未知';
+        $wave2 = "";
+    } else {
+        $wave1 = $cMap[$pred['color_wave']['primary']] ?? '';
+        $wave2 = $cMap[$pred['color_wave']['secondary']] ?? '';
+    }
+
+    $msg = "🔮 *第 {$nextIssue} 期 智能大数据预测* 🔮\n\n";
     $msg .= "-------------------------------\n";
-    $msg .= "⚠️ _数据仅供技术统计，理性参考_";
+    $msg .= "🦁 *推荐六肖*：\n{$sixStr}\n\n";
+    $msg .= "🔥 *精选三肖*：\n{$threeStr}\n\n";
+    $msg .= "🌊 *波色推荐*：\n主攻：{$wave1}波  |  次防：{$wave2}波\n";
+    $msg .= "-------------------------------\n";
+    $msg .= "⚠️ _数据基于历史概率统计，仅供参考_";
 
     broadcastMsg($msg);
 
-} catch (Exception $e) {
-    // 静默失败
-}
+} catch (Exception $e) {}
 ?>
