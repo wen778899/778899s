@@ -7,6 +7,7 @@ require_once 'utils/ZodiacManager.php';
 
 Env::load(__DIR__ . '/.env');
 
+// --- 辅助函数 ---
 function sendMsg($chatId, $text, $keyboard = null) {
     $token = trim($_ENV['TG_BOT_TOKEN']);
     $url = "https://api.telegram.org/bot$token/sendMessage";
@@ -25,7 +26,7 @@ function sendMsg($chatId, $text, $keyboard = null) {
 
 function cleanText($text) {
     $text = urldecode($text);
-    $text = preg_replace('/\p{Z}+/u', ' ', $text);
+    $text = preg_replace('/\p{Z}+/u', ' ', $text); // 替换各种怪异空格
     $text = preg_replace('/\p{C}+/u', ' ', $text);
     $text = preg_replace('/\s+/', ' ', $text);
     return trim($text);
@@ -43,6 +44,9 @@ function refreshAndSave() {
     return false;
 }
 
+// ==========================================
+// 入口验证
+// ==========================================
 $secretHeader = $_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '';
 if ($secretHeader !== trim($_ENV['TG_SECRET_TOKEN'])) {
     http_response_code(403); die('Forbidden');
@@ -60,18 +64,23 @@ $data = $update[$msgType];
 $rawText = $data['text'] ?? '';
 $chatId = $data['chat']['id'];
 
+// ==========================================
 // 1. 自动录入逻辑
+// ==========================================
 $text = cleanText($rawText);
 preg_match('/第[:：]?\s*(\d+)\s*期/u', $text, $issueMatch);
+
 if (!empty($issueMatch)) {
     $issue = $issueMatch[1];
     $textWithoutIssue = str_replace($issue, '', $text);
     preg_match_all('/(?<!\d)(\d{2})(?!\d)/', $textWithoutIssue, $numMatches);
+    
     $validNums = [];
     foreach ($numMatches[1] as $n) {
         $val = intval($n);
         if ($val >= 1 && $val <= 49) $validNums[] = $n;
     }
+
     if (count($validNums) >= 7) {
         $nums = array_slice($validNums, 0, 7);
         try {
@@ -82,7 +91,9 @@ if (!empty($issueMatch)) {
             $stmt = $pdo->prepare($sql);
             $params = array_merge([$issue], $nums, $nums);
             $stmt->execute($params);
+            
             refreshAndSave();
+            
             if ($msgType === 'message') {
                 sendMsg($chatId, "✅ *录入成功*\n第 `{$issue}` 期\n号码: " . implode(" ", $nums));
             }
@@ -91,25 +102,32 @@ if (!empty($issueMatch)) {
     }
 }
 
+// ==========================================
 // 2. 管理员菜单
+// ==========================================
 if ($msgType === 'message') {
     $senderId = $data['from']['id'];
     $adminId = trim($_ENV['TG_ADMIN_ID']);
+
     if ((string)$senderId === (string)$adminId) {
+        
         $mainKeyboard = [
             'keyboard' => [
                 [['text' => '🔮 查看下期预测'], ['text' => '🚀 推送预测到频道']], 
                 [['text' => '📊 查看最新录入'], ['text' => '⚙️ 设置生肖数据']]
             ],
-            'resize_keyboard' => true, 'persistent_keyboard' => true
+            'resize_keyboard' => true,
+            'persistent_keyboard' => true
         ];
 
         if ($rawText === '/start') {
-            sendMsg($chatId, "👋 欢迎使用智能分析系统 v2.0", $mainKeyboard);
+            sendMsg($chatId, "👋 欢迎使用 AI 智能分析系统", $mainKeyboard);
         }
         
+        // --- 查看预测 (预览) ---
         elseif ($rawText === '🔮 查看下期预测') {
             $json = Settings::get('current_prediction');
+            
             $pdo = Db::connect();
             $stmt = $pdo->query("SELECT issue FROM lottery_records ORDER BY issue DESC LIMIT 1");
             $row = $stmt->fetch();
@@ -117,39 +135,49 @@ if ($msgType === 'message') {
 
             if ($json) {
                 $pred = json_decode($json, true);
+                
                 $sxEmoji = ['鼠'=>'🐀','牛'=>'🐂','虎'=>'🐅','兔'=>'🐇','龙'=>'🐉','蛇'=>'🐍','马'=>'🐎','羊'=>'🐏','猴'=>'🐒','鸡'=>'🐓','狗'=>'🐕','猪'=>'🐖'];
                 $cMap = ['red'=>'🔴红','blue'=>'🔵蓝','green'=>'🟢绿'];
 
-                // 格式化六肖
                 $sixStr = "";
-                foreach ($pred['six_xiao'] as $sx) $sixStr .= ($sxEmoji[$sx]??'') . $sx . " ";
+                foreach ($pred['six_xiao'] as $sx) $sixStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
                 
-                // 格式化三肖
+                $threeXiao = $pred['three_xiao'] ?? array_slice($pred['six_xiao'], 0, 3);
                 $threeStr = "";
-                foreach ($pred['three_xiao'] as $sx) $threeStr .= ($sxEmoji[$sx]??'') . $sx . " ";
+                foreach ($threeXiao as $sx) $threeStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
 
-                // 格式化波色
-                $wave1 = $cMap[$pred['color_wave']['primary']] ?? '';
-                $wave2 = $cMap[$pred['color_wave']['secondary']] ?? '';
+                // 波色展示逻辑更新
+                $w1 = $pred['color_wave']['primary'];
+                $w2 = $pred['color_wave']['secondary'];
+                $w1Text = $cMap[$w1] ?? '';
+                $w2Text = $cMap[$w2] ?? '';
+                $strategy = $pred['strategy_used'] ?? '标准';
 
                 $msg = "🕵️ *管理员预览*\n";
                 $msg .= "🎯 *第 {$nextIssue} 期 深度预测*\n";
+                $msg .= "🧠 模型：`{$strategy}`\n";
                 $msg .= "----------------------\n";
-                $msg .= "🦁 *推荐六肖*：{$sixStr}\n";
-                $msg .= "🔥 *精选三肖*：{$threeStr}\n";
-                $msg .= "🌊 *首选波色*：{$wave1}波\n";
-                $msg .= "🛡 *次选波色*：{$wave2}波\n";
+                $msg .= "🦁 *六肖*：{$sixStr}\n";
+                $msg .= "🔥 *三肖*：{$threeStr}\n\n";
+                // 这里的格式改了：
+                $msg .= "🌊 *波色范围*：{$w1Text}波 + {$w2Text}波\n";
+                $msg .= "👊 *本期主攻*：{$w1Text}波\n";
                 $msg .= "----------------------";
+                
                 sendMsg($chatId, $msg);
             } else {
-                sendMsg($chatId, "❌ 暂无数据");
+                sendMsg($chatId, "❌ 暂无预测数据");
             }
         }
+        
+        // --- 推送 ---
         elseif ($rawText === '🚀 推送预测到频道') {
             sendMsg($chatId, "🚀 正在发送...");
             require_once 'manual_push.php'; 
             sendMsg($chatId, "✅ 推送完成。");
         }
+        
+        // --- 其他 ---
         elseif ($rawText === '📊 查看最新录入') {
             $pdo = Db::connect();
             $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 1");
@@ -157,14 +185,14 @@ if ($msgType === 'message') {
             if ($row) sendMsg($chatId, "📅 *最新: 第 {$row['issue']} 期*\n🔢 `{$row['n1']} {$row['n2']} {$row['n3']} {$row['n4']} {$row['n5']} {$row['n6']} + {$row['spec']}`");
         }
         elseif ($rawText === '⚙️ 设置生肖数据') {
-            sendMsg($chatId, "🛠 发送JSON配置:\n`{\"鼠\":[1,13...], ...}`");
+            sendMsg($chatId, "🛠 发送JSON:\n`{\"鼠\":[1,13...], ...}`");
         }
         elseif (strpos(trim($rawText), '{') === 0) {
             $json = json_decode($rawText, true);
             if ($json && count($json) >= 12) {
                 Settings::set('zodiac_config', $rawText);
                 refreshAndSave();
-                sendMsg($chatId, "✅ 配置已更新");
+                sendMsg($chatId, "✅ 配置已更新，算法已重置");
             }
         }
         elseif (preg_match('/^删除(\d+)$/', $rawText, $delMatch)) {

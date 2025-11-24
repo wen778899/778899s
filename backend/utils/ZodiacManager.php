@@ -3,16 +3,39 @@ require_once 'Db.php';
 require_once 'Settings.php';
 
 class ZodiacManager {
-    // 固定的波色数据
+    // 1. 波色数据 (严格校对)
     public static $colors = [
-        'red'   => [1,2,7,8,12,13,18,19,23,24,29,30,34,35,40,45,46],
-        'blue'  => [3,4,9,10,14,15,20,25,26,31,36,37,41,42,47,48],
-        'green' => [5,6,11,16,17,21,22,27,28,32,33,38,39,43,44,49]
+        'red'   => [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46],
+        'blue'  => [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48],
+        'green' => [5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]
     ];
 
-    // 生肖关系模板 (用于规律推算)
-    // 三合：吉配，容易连续出现
-    // 六合：贵人，容易伴随出现
+    // 2. 五行数据 (严格校对)
+    public static $elements = [
+        '金' => [3, 4, 11, 12, 25, 26, 33, 34, 41, 42],
+        '木' => [7, 8, 15, 16, 23, 24, 37, 38, 45, 46],
+        '水' => [13, 14, 21, 22, 29, 30, 43, 44],
+        '火' => [1, 2, 9, 10, 17, 18, 31, 32, 39, 40, 47, 48],
+        '土' => [5, 6, 19, 20, 27, 28, 35, 36, 49]
+    ];
+
+    // 3. 综合属性 (家禽野兽、天地、阴阳、吉凶) - 根据图片录入
+    // key: 属性名, value: 包含的生肖
+    public static $attributes = [
+        '家禽' => ['牛', '马', '羊', '鸡', '狗', '猪'],
+        '野兽' => ['鼠', '虎', '兔', '龙', '蛇', '猴'],
+        
+        '天肖' => ['龙', '兔', '牛', '马', '猴', '猪'],
+        '地肖' => ['鼠', '虎', '蛇', '羊', '鸡', '狗'],
+        
+        '阴肖' => ['鼠', '龙', '蛇', '马', '狗', '猪'],
+        '阳肖' => ['牛', '虎', '兔', '羊', '猴', '鸡'],
+        
+        '吉肖' => ['兔', '龙', '蛇', '马', '羊', '鸡'],
+        '凶肖' => ['鼠', '牛', '虎', '猴', '狗', '猪']
+    ];
+
+    // 4. 生肖关系 (三合六合)
     public static $relations = [
         '鼠' => ['三合'=>['龙','猴'], '六合'=>['牛']],
         '牛' => ['三合'=>['蛇','鸡'], '六合'=>['鼠']],
@@ -28,46 +51,51 @@ class ZodiacManager {
         '猪' => ['三合'=>['兔','羊'], '六合'=>['虎']]
     ];
 
-    // 获取当前生肖映射
     public static function getMapping() {
         $json = Settings::get('zodiac_config');
         if ($json) return json_decode($json, true);
-        
-        // 2025年 默认配置
+        // 2025 默认配置
         return [
-            '蛇' => [1, 13, 25, 37, 49],
-            '龙' => [2, 14, 26, 38],
-            '兔' => [3, 15, 27, 39],
-            '虎' => [4, 16, 28, 40],
-            '牛' => [5, 17, 29, 41],
-            '鼠' => [6, 18, 30, 42],
-            '猪' => [7, 19, 31, 43],
-            '狗' => [8, 20, 32, 44],
-            '鸡' => [9, 21, 33, 45],
-            '猴' => [10, 22, 34, 46],
-            '羊' => [11, 23, 35, 47],
-            '马' => [12, 24, 36, 48]
+            '蛇'=>[1,13,25,37,49], '龙'=>[2,14,26,38], '兔'=>[3,15,27,39], '虎'=>[4,16,28,40],
+            '牛'=>[5,17,29,41], '鼠'=>[6,18,30,42], '猪'=>[7,19,31,43], '狗'=>[8,20,32,44],
+            '鸡'=>[9,21,33,45], '猴'=>[10,22,34,46], '羊'=>[11,23,35,47], '马'=>[12,24,36,48]
         ];
+    }
+
+    // 获取生肖的所有附加属性
+    public static function getAttr($zodiac) {
+        $res = [];
+        foreach (self::$attributes as $key => $zodiacs) {
+            if (in_array($zodiac, $zodiacs)) {
+                // 将属性分类，例如 type1=家禽/野兽
+                if (in_array($key, ['家禽','野兽'])) $res['jy'] = $key;
+                if (in_array($key, ['天肖','地肖'])) $res['td'] = $key;
+                if (in_array($key, ['阴肖','阳肖'])) $res['yy'] = $key;
+                if (in_array($key, ['吉肖','凶肖'])) $res['jx'] = $key;
+            }
+        }
+        return $res;
     }
 
     public static function getInfo($num) {
         $num = intval($num);
         $zodiacMap = self::getMapping();
-        $myZodiac = '';
-        foreach ($zodiacMap as $z => $nums) {
-            if (in_array($num, $nums)) { $myZodiac = $z; break; }
-        }
-        $myColor = '';
-        foreach (self::$colors as $c => $nums) {
-            if (in_array($num, $nums)) { $myColor = $c; break; }
-        }
-        return ['num' => $num, 'zodiac' => $myZodiac, 'color' => $myColor];
-    }
+        $myZodiac = ''; foreach($zodiacMap as $z=>$ns) if(in_array($num, $ns)){$myZodiac=$z; break;}
+        $myColor = ''; foreach(self::$colors as $c=>$ns) if(in_array($num, $ns)){$myColor=$c; break;}
+        $myElem = ''; foreach(self::$elements as $e=>$ns) if(in_array($num, $ns)){$myElem=$e; break;}
+        
+        $attrs = self::getAttr($myZodiac);
 
-    // 获取某个生肖的关联生肖 (三合+六合)
+        return array_merge([
+            'num' => $num, 
+            'zodiac' => $myZodiac, 
+            'color' => $myColor, 
+            'element' => $myElem
+        ], $attrs);
+    }
+    
     public static function getRelatedZodiacs($zodiac) {
-        if (!isset(self::$relations[$zodiac])) return [];
-        return array_merge(self::$relations[$zodiac]['三合'], self::$relations[$zodiac]['六合']);
+        return isset(self::$relations[$zodiac]) ? array_merge(self::$relations[$zodiac]['三合'], self::$relations[$zodiac]['六合']) : [];
     }
 }
 ?>

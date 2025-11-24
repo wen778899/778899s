@@ -41,25 +41,22 @@ try {
     $sixStr = "";
     foreach ($pred['six_xiao'] as $sx) $sixStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
     
-    // 如果算法版本较旧没有 three_xiao，则截取前三个
     $threeXiao = $pred['three_xiao'] ?? array_slice($pred['six_xiao'], 0, 3);
     $threeStr = "";
     foreach ($threeXiao as $sx) $threeStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
 
-    // 兼容旧版波色格式 (如果是字符串转为数组)
-    if (is_string($pred['color_wave'])) {
-        $wave1 = $cMap[$pred['color_wave']] ?? '未知';
-        $wave2 = "";
-    } else {
-        $wave1 = $cMap[$pred['color_wave']['primary']] ?? '';
-        $wave2 = $cMap[$pred['color_wave']['secondary']] ?? '';
-    }
+    // 波色展示
+    $w1 = $pred['color_wave']['primary'];
+    $w2 = $pred['color_wave']['secondary'];
+    $w1Text = $cMap[$w1] ?? '';
+    $w2Text = $cMap[$w2] ?? '';
 
     $msg = "🔮 *第 {$nextIssue} 期 智能大数据预测* 🔮\n\n";
     $msg .= "-------------------------------\n";
     $msg .= "🦁 *推荐六肖*：\n{$sixStr}\n\n";
     $msg .= "🔥 *精选三肖*：\n{$threeStr}\n\n";
-    $msg .= "🌊 *波色推荐*：\n主攻：{$wave1}波  |  次防：{$wave2}波\n";
+    $msg .= "🌊 *波色推荐*：{$w1Text}波 / {$w2Text}波\n";
+    $msg .= "👊 *本期主攻*：{$w1Text}波\n";
     $msg .= "-------------------------------\n";
     $msg .= "⚠️ _数据基于历史概率统计，仅供参考_";
 
