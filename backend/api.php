@@ -1,12 +1,12 @@
 <?php
 require_once 'utils/Env.php';
 require_once 'utils/Db.php';
+require_once 'utils/ZodiacManager.php';
 require_once 'utils/LotteryLogic.php';
-require_once 'utils/Settings.php'; // 引入新类
+require_once 'utils/Settings.php';
 
 Env::load(__DIR__ . '/.env');
 
-// CORS 配置
 $allowed_origin = $_ENV['FRONTEND_URL'];
 header("Access-Control-Allow-Origin: " . $allowed_origin);
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
@@ -21,16 +21,16 @@ try {
     $pdo = Db::connect();
 
     if ($action === 'get_data') {
-        // 1. 获取历史记录 (前 50 条)
+        // 1. 获取历史记录
         $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 50");
         $history = $stmt->fetchAll();
 
-        // 处理历史数据格式
+        // 格式化数据
         $processedHistory = [];
         foreach ($history as $row) {
             $nums = [];
-            for($i=1; $i<=6; $i++) $nums[] = LotteryLogic::getInfo($row["n$i"]);
-            $specInfo = LotteryLogic::getInfo($row['spec']);
+            for($i=1; $i<=6; $i++) $nums[] = ZodiacManager::getInfo($row["n$i"]);
+            $specInfo = ZodiacManager::getInfo($row['spec']);
             
             $processedHistory[] = [
                 'id' => $row['id'],
@@ -41,19 +41,21 @@ try {
             ];
         }
 
-        // 2. 获取下一期期号
-        $nextIssue = isset($history[0]) ? $history[0]['issue'] + 1 : '???';
-
-        // 3. 【核心修改】直接从数据库读取 Bot 生成的预测结果
-        // 如果数据库里没有（比如刚初始化），则临时算一个
-        $savedPrediction = Settings::get('current_prediction');
-        
-        if ($savedPrediction) {
-            $prediction = json_decode($savedPrediction, true);
+        // 2. 获取或计算预测
+        // 优先读取 Settings 里存好的，保证 Bot 推送的和网页显示的一致
+        $savedJson = Settings::get('current_prediction');
+        if ($savedJson) {
+            $prediction = json_decode($savedJson, true);
         } else {
-            // 兜底策略：如果没有存档，临时算一个
-            $prediction = LotteryLogic::predict($history);
+            // 如果没有存档，现场算一个
+            $fullStmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
+            $fullHistory = $fullStmt->fetchAll();
+            $prediction = LotteryLogic::predict($fullHistory);
+            // 存回去
+            Settings::set('current_prediction', json_encode($prediction));
         }
+
+        $nextIssue = isset($history[0]) ? $history[0]['issue'] + 1 : '???';
 
         echo json_encode([
             'status' => 'success',
