@@ -21,11 +21,10 @@ try {
     $pdo = Db::connect();
 
     if ($action === 'get_data') {
-        // 1. 获取历史记录
+        // 1. 获取历史记录 (展示用，前50条)
         $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 50");
         $history = $stmt->fetchAll();
 
-        // 格式化数据
         $processedHistory = [];
         foreach ($history as $row) {
             $nums = [];
@@ -41,17 +40,15 @@ try {
             ];
         }
 
-        // 2. 获取或计算预测
-        // 优先读取 Settings 里存好的，保证 Bot 推送的和网页显示的一致
+        // 2. 获取预测结果
         $savedJson = Settings::get('current_prediction');
         if ($savedJson) {
             $prediction = json_decode($savedJson, true);
         } else {
-            // 如果没有存档，现场算一个
+            // 如果没有存档，取 100 条历史进行深度分析
             $fullStmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
             $fullHistory = $fullStmt->fetchAll();
             $prediction = LotteryLogic::predict($fullHistory);
-            // 存回去
             Settings::set('current_prediction', json_encode($prediction));
         }
 

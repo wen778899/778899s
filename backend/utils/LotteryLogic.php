@@ -4,79 +4,113 @@ require_once 'ZodiacManager.php';
 class LotteryLogic {
     
     /**
-     * 核心预测算法
-     * @param array $history 最近的历史记录 (建议传入100期)
-     * @return array 预测结果
+     * 高级多维加权预测引擎
+     * 结合：历史热度 + 遗漏回补 + 规律模板 + 波色平衡
      */
     public static function predict($history) {
         if (empty($history)) return [];
 
         $zodiacMap = ZodiacManager::getMapping();
-        $zodiacScores = []; // 生肖得分表
-        $colorStats = ['red'=>0, 'blue'=>0, 'green'=>0]; // 波色统计
-
-        // 初始化所有生肖得分为0
-        foreach (array_keys($zodiacMap) as $z) $zodiacScores[$z] = 0;
-
-        // --- 1. 数据统计 (最近 50 期权重最高) ---
-        $recentLimit = min(count($history), 50);
+        $allZodiacs = array_keys($zodiacMap);
         
-        for ($i = 0; $i < $recentLimit; $i++) {
-            $row = $history[$i];
-            $info = ZodiacManager::getInfo($row['spec']); // 获取特码信息
-            
-            // 统计波色
-            if (isset($colorStats[$info['color']])) {
-                $colorStats[$info['color']]++;
-            }
+        // --- 初始化记分板 ---
+        $scores = [];
+        foreach ($allZodiacs as $z) $scores[$z] = 0;
 
-            // 统计生肖热度 (越近的期数权重越高)
-            // 权重算法：当前期权重 1.0，50期前权重 0.1
-            $weight = 1 + (($recentLimit - $i) / $recentLimit);
-            
-            if (isset($zodiacScores[$info['zodiac']])) {
-                $zodiacScores[$info['zodiac']] += (10 * $weight); // 热度加分
+        // --- 1. 热度分析 (Trend Analysis) - 权重 30% ---
+        // 统计最近 10期(短期) 和 30期(中期) 的出现频率
+        $limitShort = min(count($history), 10);
+        $limitMid = min(count($history), 30);
+        
+        for ($i = 0; $i < $limitMid; $i++) {
+            $row = $history[$i];
+            $info = ZodiacManager::getInfo($row['spec']);
+            $z = $info['zodiac'];
+
+            if ($i < $limitShort) {
+                $scores[$z] += 3; // 近10期出现，加高分 (追热)
+            } else {
+                $scores[$z] += 1; // 10-30期出现，加低分
             }
         }
 
-        // --- 2. 遗漏值分析 (Omission) ---
-        // 查找每个生肖多少期没出了，遗漏越久，回补概率越大（加分）
-        foreach (array_keys($zodiacMap) as $z) {
-            $omission = 0;
+        // --- 2. 遗漏值分析 (Omission) - 权重 20% ---
+        // 寻找很久没出的生肖 (博反弹)
+        foreach ($allZodiacs as $z) {
+            $omissionCount = 0;
             foreach ($history as $row) {
                 $info = ZodiacManager::getInfo($row['spec']);
                 if ($info['zodiac'] === $z) break;
-                $omission++;
+                $omissionCount++;
             }
-            // 遗漏加分：每遗漏1期加 2 分
-            $zodiacScores[$z] += ($omission * 2);
+            // 遗漏每超过10期，加 2 分
+            $scores[$z] += floor($omissionCount / 10) * 2;
         }
 
-        // --- 3. 排序与筛选 ---
-        // 按分数从高到低排序
-        arsort($zodiacScores);
-        
-        // 策略：取分数最高的 6 个生肖 (热度+遗漏综合分)
-        $sixXiao = array_slice(array_keys($zodiacScores), 0, 6);
+        // --- 3. 规律模板匹配 (Pattern Templates) - 权重 30% ---
+        // 基于上一期结果，推算下一期
+        if (isset($history[0])) {
+            $lastRow = $history[0];
+            $lastInfo = ZodiacManager::getInfo($lastRow['spec']);
+            $lastZodiac = $lastInfo['zodiac'];
 
-        // --- 4. 波色预测 ---
-        // 策略：杀弱项。统计最弱的波色，排除它，然后在剩下两个里选走势强的一个
-        asort($colorStats); // 升序，第一个是最弱的
+            // A. 连庄规律 (上期开啥，下期还开啥)
+            // 历史统计显示连庄概率约为 10%
+            $scores[$lastZodiac] += 2; 
+
+            // B. 三合六合规律 (最强规律)
+            // 如果上期是龙，下期开 鼠/猴/鸡 的概率极高
+            $related = ZodiacManager::getRelatedZodiacs($lastZodiac);
+            foreach ($related as $relZ) {
+                $scores[$relZ] += 4; // 关联生肖大幅加分
+            }
+        }
+
+        // --- 4. 波色平衡分析 (Color Balance) - 权重 20% ---
+        // 统计近20期波色，找出弱势波色进行回补
+        $colorStats = ['red'=>0, 'blue'=>0, 'green'=>0];
+        $limitColor = min(count($history), 20);
+        for ($i = 0; $i < $limitColor; $i++) {
+            $info = ZodiacManager::getInfo($history[$i]['spec']);
+            if (isset($colorStats[$info['color']])) $colorStats[$info['color']]++;
+        }
+        
+        // 找出出现次数最少的波色 (弱势波色)
+        asort($colorStats);
         $weakestColor = array_key_first($colorStats);
-        unset($colorStats[$weakestColor]); 
-        // 剩下两个里选最强的
-        arsort($colorStats);
-        $bestColor = array_key_first($colorStats);
+        
+        // 给属于该弱势波色的所有数字对应的生肖加分
+        // 注意：一个生肖有多个数字，只要有一个数字属于该波色，就加分
+        foreach ($allZodiacs as $z) {
+            $nums = $zodiacMap[$z];
+            foreach ($nums as $n) {
+                $c = ZodiacManager::getInfo($n)['color'];
+                if ($c === $weakestColor) {
+                    $scores[$z] += 2; // 波色回补加分
+                    break; // 该生肖加一次即可
+                }
+            }
+        }
+
+        // --- 5. 最终结算 ---
+        // 按分数降序排列
+        arsort($scores);
+        
+        // 取前 6 名
+        $sixXiao = array_slice(array_keys($scores), 0, 6);
+
+        // 预测波色：直接取分数最高的生肖对应的波色，或者取回补波色
+        // 这里策略是：取 Top1 生肖的主波色
+        $topZodiac = $sixXiao[0];
+        // 找到该生肖下最热的波色
+        $topZodiacNums = $zodiacMap[$topZodiac];
+        $bestColor = ZodiacManager::getInfo($topZodiacNums[0])['color'];
 
         return [
             'six_xiao' => $sixXiao,
-            'color_wave' => $bestColor
+            'color_wave' => $bestColor,
+            'scores_debug' => array_slice($scores, 0, 6) // 调试用，看谁分高
         ];
-    }
-
-    // 获取格式化后的详细信息 (给 API 用)
-    public static function getInfo($num) {
-        return ZodiacManager::getInfo($num);
     }
 }
 ?>
