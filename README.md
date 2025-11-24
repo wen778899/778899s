@@ -1,6 +1,6 @@
 DB_HOST=localhost
-DB_NAME=your_db_name
-DB_USER=your_db_user
-DB_PASS=your_db_password
-TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-ADMIN_CHAT_ID="987654321"
+DB_NAME=你的数据库名
+DB_USER=你的用户名
+DB_PASS=你的密码
+TG_SECRET_TOKEN=my_super_secret_123
+FRONTEND_URL=https://88.9526.ip-ddns.com
