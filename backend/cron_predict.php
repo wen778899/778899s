@@ -7,12 +7,11 @@ if (isset($_SERVER['REMOTE_ADDR']) && !in_array($argv[1]??'', ['manual'])) {
 require_once __DIR__ . '/utils/Env.php';
 require_once __DIR__ . '/utils/Db.php';
 require_once __DIR__ . '/utils/LotteryLogic.php';
-require_once __DIR__ . '/utils/Settings.php'; // 引入配置
+require_once __DIR__ . '/utils/Settings.php';
 
 Env::load(__DIR__ . '/.env');
 
 // 1. 检查开关
-// 如果是手动触发(manual)，则忽略开关，强制发送
 $isManual = ($argv[1] ?? '') === 'manual';
 $isEnabled = Settings::get('push_enabled', '0') === '1';
 
@@ -39,28 +38,49 @@ function broadcastToChannel($text) {
 
 try {
     $pdo = Db::connect();
-    $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
-    $history = $stmt->fetchAll();
     
-    if (empty($history)) exit;
-
-    $lastIssue = $history[0]['issue'];
-    $nextIssue = $lastIssue + 1;
-
-    // 2. 重新生成预测 (确保推送的是最新鲜的)
-    $pred = LotteryLogic::predict($history);
+    // 获取最新一期期号，为了显示在文案里
+    $stmt = $pdo->query("SELECT issue FROM lottery_records ORDER BY issue DESC LIMIT 1");
+    $lastRow = $stmt->fetch();
     
-    // 3. 同时更新数据库里的“前端显示数据”，保持同步
-    Settings::set('current_prediction', json_encode($pred));
+    if (!$lastRow) exit;
 
-    // 4. 构建文案
+    $nextIssue = $lastRow['issue'] + 1;
+
+    // ========================================================
+    // 核心修正：优先从数据库读取已锁定的预测，而不是重新计算
+    // ========================================================
+    
+    $savedJson = Settings::get('current_prediction');
+    $pred = null;
+
+    if ($savedJson) {
+        // 1. 尝试读取已保存的预测 (保证和前端一致)
+        $pred = json_decode($savedJson, true);
+        echo "Loaded prediction from Database (Synced).\n";
+    }
+
+    if (!$pred) {
+        // 2. 兜底逻辑：如果数据库里竟然没有（比如刚清空过），才被迫重算
+        // 这种情况极少发生，一旦发生，立即存入数据库，保证后续一致
+        echo "No saved prediction found. Calculating new one...\n";
+        $stmtHist = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
+        $history = $stmtHist->fetchAll();
+        $pred = LotteryLogic::predict($history);
+        Settings::set('current_prediction', json_encode($pred));
+    }
+
+    // ========================================================
+
+    // 构建文案
     $sxEmoji = ['鼠'=>'🐀','牛'=>'🐂','虎'=>'🐅','兔'=>'🐇','龙'=>'🐉','蛇'=>'🐍','马'=>'🐎','羊'=>'🐏','猴'=>'🐒','鸡'=>'🐓','狗'=>'🐕','猪'=>'🐖'];
     $sixXiaoStr = "";
     foreach ($pred['six_xiao'] as $sx) {
         $sixXiaoStr .= ($sxEmoji[$sx]??'') . "*{$sx}*  ";
     }
+    
     $colorMap = ['red'=>'🔴 红波', 'blue'=>'🔵 蓝波', 'green'=>'🟢 绿波'];
-    $waveStr = $colorMap[$pred['color_wave']];
+    $waveStr = $colorMap[$pred['color_wave']] ?? '未知';
 
     $message = "🔮 *第 {$nextIssue} 期 智能算法预测* 🔮\n\n";
     $message .= "🦁 *六肖推荐*：\n{$sixXiaoStr}\n\n";
