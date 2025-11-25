@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom'; // 引入 Link
 import Ball from './components/Ball';
 
 function App() {
   const [data, setData] = useState(null);
-  const [predHistory, setPredHistory] = useState([]);
+  // const [predHistory, setPredHistory] = useState([]); // 首页不需要加载战绩了
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(50);
   const [expanding, setExpanding] = useState(false);
@@ -14,9 +15,7 @@ function App() {
       const json = await res.json();
       if (json.status === 'success') setData(json.data);
       
-      const resHist = await fetch(`${import.meta.env.VITE_API_URL}?action=get_history&t=${Date.now()}`);
-      const jsonHist = await resHist.json();
-      if (jsonHist.status === 'success') setPredHistory(jsonHist.data);
+      // 移除了 get_history 请求，提升首页速度
     } catch (error) {
       console.error(error);
     } finally {
@@ -32,7 +31,7 @@ function App() {
     setLimit(limit + 50);
   };
 
-  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">AI 计算中...</div>;
+  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">智能分析中...</div>;
   if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
 
   const latestDraw = data.history[0];
@@ -47,7 +46,6 @@ function App() {
   let w1 = 'red', w2 = 'blue';
   if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
 
-  // 解析杀号
   const strategyStr = pred.strategy_used || '';
   const killedMatch = strategyStr.match(/杀[:：](.+)/);
   const killedZodiac = killedMatch ? killedMatch[1] : null;
@@ -63,13 +61,16 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-100 font-sans pb-10">
       
+      {/* === 顶部 Header (精简版) === */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 h-12 flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <span className="text-xl">🤖</span>
-            <h1 className="text-lg font-bold text-gray-800">AI 智能分析</h1>
-          </div>
-          <div className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-500">第 {latestDraw.issue} 期</div>
+          {/* 左侧：仅保留标题 */}
+          <h1 className="text-lg font-bold text-gray-800 tracking-tight">六合AI分析</h1>
+          
+          {/* 右侧：战绩入口按钮 */}
+          <Link to="/history" className="text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors flex items-center gap-1">
+            <span>📋 战绩记录</span>
+          </Link>
         </div>
       </header>
 
@@ -113,30 +114,8 @@ function App() {
       </div>
 
       <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
-        {predHistory.length > 0 && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-              <span className="text-xs text-gray-500 font-bold uppercase">AI Accuracy</span>
-              <span className="text-[10px] text-gray-400">复盘记录</span>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {predHistory.map((item) => (
-                <div key={item.issue} className="p-3 flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                     <span className="font-mono text-gray-600 font-bold">{item.issue}期</span>
-                     <span className="text-xs text-gray-400">开: {item.result_zodiac}</span>
-                  </div>
-                  <div className="flex gap-2">
-                     <span className={`px-2 py-0.5 rounded text-xs font-bold ${item.is_hit_six == 1 ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-400'}`}>
-                       {item.is_hit_six == 1 ? '六肖中' : '错'}
-                     </span>
-                     {item.is_hit_three == 1 && <span className="px-2 py-0.5 rounded text-xs font-bold bg-yellow-50 text-yellow-600">三肖中</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        
+        {/* 原来的战绩列表已被移除 */}
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
           <div className="text-center mb-4 relative">
