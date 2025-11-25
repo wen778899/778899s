@@ -7,7 +7,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(50);
   const [expanding, setExpanding] = useState(false);
-  const [expandHistory, setExpandHistory] = useState(false);
+  // const [expandHistory, setExpandHistory] = useState(false); // 暂时不用这个，用分页逻辑
 
   const fetchData = async (currentLimit) => {
     try {
@@ -37,16 +37,17 @@ function App() {
   };
 
   if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">AI 计算中...</div>;
-  if (!data) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
+  if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
 
   const latestDraw = data.history[0];
-  const historyList = data.history.slice(1);
+  const historyList = data.history.slice(1); // 这就是我们要显示的列表
   const totalInDb = data.total_count || historyList.length;
   const hasMore = historyList.length < (totalInDb - 1); 
 
   const pred = data.prediction;
   const sixXiao = pred.six_xiao || [];
   const threeXiao = pred.three_xiao || sixXiao.slice(0, 3);
+  
   let w1 = 'red', w2 = 'blue';
   if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
 
@@ -56,6 +57,7 @@ function App() {
     green: 'bg-emerald-600 border-emerald-500 text-white'
   };
   const waveNames = { red: '红', blue: '蓝', green: '绿' };
+  const waveTextStyles = { red: 'text-red-500', blue: 'text-blue-500', green: 'text-emerald-500' };
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans pb-10">
@@ -80,7 +82,7 @@ function App() {
              </div>
              <div className="text-right">
                 <div className="text-[10px] text-gray-400">模型</div>
-                <div className="text-[10px] bg-indigo-600 px-2 py-0.5 rounded text-white truncate w-24 text-center">V6泰坦矩阵</div>
+                <div className="text-[10px] bg-indigo-600 px-2 py-0.5 rounded text-white truncate w-24 text-center">{pred.strategy_used || 'V6泰坦矩阵'}</div>
              </div>
           </div>
           <div className="mb-4">
@@ -94,7 +96,7 @@ function App() {
           <div className="flex gap-3 mb-4">
              <div className="flex-1 bg-slate-800/60 rounded-lg p-2 border border-slate-700 flex items-center justify-between">
                 <span className="text-xs text-gray-400">推荐</span>
-                <div className="font-bold text-sm"><span className={`mr-1 ${w1=='red'?'text-red-400':w1=='blue'?'text-blue-400':'text-green-400'}`}>{waveNames[w1]}</span>/<span className={`ml-1 ${w2=='red'?'text-red-400':w2=='blue'?'text-blue-400':'text-green-400'}`}>{waveNames[w2]}</span></div>
+                <div className="font-bold text-sm"><span className={`mr-1 ${waveTextStyles[w1]}`}>{waveNames[w1]}</span>/<span className={`ml-1 ${waveTextStyles[w2]}`}>{waveNames[w2]}</span></div>
              </div>
              <div className={`flex-1 rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[w1]}`}>
                 <div className="absolute top-0 left-0 bg-white/20 text-[8px] px-1 rounded-br">主攻</div>
@@ -110,7 +112,7 @@ function App() {
 
       <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
         
-        {/* === 战绩红黑榜 (新) === */}
+        {/* === 战绩红黑榜 === */}
         {predHistory.length > 0 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
@@ -157,7 +159,8 @@ function App() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-200"><span className="text-xs text-gray-500 font-bold uppercase">History Records</span></div>
           <div className="divide-y divide-gray-100">
-            {displayList.map((item) => (
+            {/* 修正点：这里改用 historyList */}
+            {historyList.map((item) => (
               <div key={item.id} className="p-3 flex flex-col gap-2 hover:bg-gray-50 transition-colors">
                 <div className="flex justify-between items-center">
                    <div className="flex items-center gap-2">
