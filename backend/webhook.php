@@ -7,7 +7,6 @@ require_once 'utils/ZodiacManager.php';
 
 Env::load(__DIR__ . '/.env');
 
-// --- 基础设置 ---
 ini_set('display_errors', 0);
 error_reporting(E_ALL);
 
@@ -37,21 +36,15 @@ function cleanText($text) {
     return trim($text);
 }
 
-// 核心：计算新预测并存档
 function refreshAndSave() {
     try {
         $pdo = Db::connect();
         $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 100");
         $history = $stmt->fetchAll();
-        
         if ($history) {
-            // 1. 运行预测
             $pred = LotteryLogic::predict($history);
-            
-            // 2. 保存给前端显示
             Settings::set('current_prediction', json_encode($pred));
             
-            // 3. 【新增】存档到历史表，用于未来复盘验证
             $nextIssue = $history[0]['issue'] + 1;
             $sql = "INSERT IGNORE INTO prediction_history 
                     (issue, six_xiao, three_xiao, wave_primary, wave_secondary, strategy_used) 
@@ -71,7 +64,6 @@ function refreshAndSave() {
     return false;
 }
 
-// --- 入口逻辑 ---
 $content = file_get_contents("php://input");
 $update = json_decode($content, true);
 
@@ -92,13 +84,11 @@ if (!empty($issueMatch)) {
     $issue = $issueMatch[1];
     $textWithoutIssue = str_replace($issue, '', $text);
     preg_match_all('/(?<!\d)(\d{2})(?!\d)/', $textWithoutIssue, $numMatches);
-    
     $validNums = [];
     foreach ($numMatches[1] as $n) {
         $val = intval($n);
         if ($val >= 1 && $val <= 49) $validNums[] = $n;
     }
-
     if (count($validNums) >= 7) {
         $nums = array_slice($validNums, 0, 7);
         try {
@@ -110,10 +100,7 @@ if (!empty($issueMatch)) {
             $params = array_merge([$issue], $nums, $nums);
             $stmt->execute($params);
             
-            // 【新增】复盘上一期的预测准确度
             LotteryLogic::verifyPrediction($issue, $nums[6]);
-            
-            // 计算下一期
             refreshAndSave();
             
             if ($msgType === 'message') {
@@ -161,13 +148,27 @@ if ($msgType === 'message') {
                 $pred = json_decode($json, true);
                 $sxEmoji = ['鼠'=>'🐀','牛'=>'🐂','虎'=>'🐅','兔'=>'🐇','龙'=>'🐉','蛇'=>'🐍','马'=>'🐎','羊'=>'🐏','猴'=>'🐒','鸡'=>'🐓','狗'=>'🐕','猪'=>'🐖'];
                 $cMap = ['red'=>'🔴红','blue'=>'🔵蓝','green'=>'🟢绿'];
+                
                 $sixStr = ""; foreach ($pred['six_xiao'] as $sx) $sixStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
                 $threeXiao = $pred['three_xiao'] ?? array_slice($pred['six_xiao'], 0, 3);
                 $threeStr = ""; foreach ($threeXiao as $sx) $threeStr .= ($sxEmoji[$sx]??'') . "*$sx* ";
                 $w1 = $cMap[$pred['color_wave']['primary']] ?? '';
                 $w2 = $cMap[$pred['color_wave']['secondary']] ?? '';
-                $strategy = $pred['strategy_used'] ?? '标准';
-                $msg = "🕵️ *管理员预览*\n🎯 *第 {$nextIssue} 期*\n🧠 `{$strategy}`\n----------------\n🦁 *六肖*：{$sixStr}\n🔥 *三肖*：{$threeStr}\n🌊 *波色*：{$w1} / {$w2}\n👊 *主攻*：{$w1}";
+                
+                // 提取杀号
+                $killedStr = '';
+                if (preg_match('/杀[:：](.+)/u', $pred['strategy_used'], $m)) {
+                    $killedStr = $m[1];
+                }
+
+                $msg = "🕵️ *管理员预览*\n";
+                $msg .= "🎯 *第 {$nextIssue} 期*\n";
+                if ($killedStr) $msg .= "🚫 *绝杀一肖*：{$killedStr}\n";
+                $msg .= "----------------------\n";
+                $msg .= "🦁 *六肖*：{$sixStr}\n";
+                $msg .= "🔥 *三肖*：{$threeStr}\n";
+                $msg .= "🌊 *波色*：{$w1} / {$w2}\n";
+                $msg .= "👊 *主攻*：{$w1}";
                 sendMsg($chatId, $msg);
             } else sendMsg($chatId, "❌ 无数据");
         }
@@ -175,7 +176,7 @@ if ($msgType === 'message') {
             sendMsg($chatId, "🚀 发送中..."); require_once 'manual_push.php'; sendMsg($chatId, "✅ 完成");
         }
         elseif ($rawText === '⚙️ 设置生肖数据') {
-            sendMsg($chatId, "🛠 请发送生肖 JSON");
+            sendMsg($chatId, "🛠 发 JSON");
         }
         elseif (strpos(trim($rawText), '{') === 0) {
             $json = json_decode($rawText, true);
