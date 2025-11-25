@@ -3,24 +3,20 @@ import Ball from './components/Ball';
 
 function App() {
   const [data, setData] = useState(null);
-  const [predHistory, setPredHistory] = useState([]); // 战绩数据
+  const [predHistory, setPredHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(50);
   const [expanding, setExpanding] = useState(false);
-  // const [expandHistory, setExpandHistory] = useState(false); // 暂时不用这个，用分页逻辑
 
   const fetchData = async (currentLimit) => {
     try {
-      // 1. 获取主数据
       const res = await fetch(`${import.meta.env.VITE_API_URL}?action=get_data&limit=${currentLimit}&t=${Date.now()}`);
       const json = await res.json();
       if (json.status === 'success') setData(json.data);
       
-      // 2. 获取战绩数据
       const resHist = await fetch(`${import.meta.env.VITE_API_URL}?action=get_history&t=${Date.now()}`);
       const jsonHist = await resHist.json();
       if (jsonHist.status === 'success') setPredHistory(jsonHist.data);
-
     } catch (error) {
       console.error(error);
     } finally {
@@ -40,7 +36,7 @@ function App() {
   if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
 
   const latestDraw = data.history[0];
-  const historyList = data.history.slice(1); // 这就是我们要显示的列表
+  const historyList = data.history.slice(1);
   const totalInDb = data.total_count || historyList.length;
   const hasMore = historyList.length < (totalInDb - 1); 
 
@@ -50,6 +46,11 @@ function App() {
   
   let w1 = 'red', w2 = 'blue';
   if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
+
+  // 解析杀号
+  const strategyStr = pred.strategy_used || '';
+  const killedMatch = strategyStr.match(/杀[:：](.+)/);
+  const killedZodiac = killedMatch ? killedMatch[1] : null;
 
   const waveStyles = {
     red: 'bg-red-600 border-red-500 text-white',
@@ -72,7 +73,6 @@ function App() {
         </div>
       </header>
 
-      {/* 预测横幅 */}
       <div className="bg-slate-900 text-white shadow-xl relative overflow-hidden">
         <div className="max-w-2xl mx-auto px-4 py-5 relative z-10">
           <div className="flex justify-between items-center mb-4">
@@ -81,8 +81,10 @@ function App() {
                <div className="text-2xl font-bold text-white">第 {data.next_issue} 期</div>
              </div>
              <div className="text-right">
-                <div className="text-[10px] text-gray-400">模型</div>
-                <div className="text-[10px] bg-indigo-600 px-2 py-0.5 rounded text-white truncate w-24 text-center">{pred.strategy_used || 'V6泰坦矩阵'}</div>
+                <div className="text-[10px] text-gray-400">绝杀</div>
+                <div className="text-xs bg-red-600 px-2 py-0.5 rounded text-white font-bold">
+                  {killedZodiac || '计算中'}
+                </div>
              </div>
           </div>
           <div className="mb-4">
@@ -111,13 +113,11 @@ function App() {
       </div>
 
       <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
-        
-        {/* === 战绩红黑榜 === */}
         {predHistory.length > 0 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
               <span className="text-xs text-gray-500 font-bold uppercase">AI Accuracy</span>
-              <span className="text-[10px] text-gray-400">近20期验证</span>
+              <span className="text-[10px] text-gray-400">复盘记录</span>
             </div>
             <div className="divide-y divide-gray-50">
               {predHistory.map((item) => (
@@ -138,7 +138,6 @@ function App() {
           </div>
         )}
 
-        {/* 最新结果 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
           <div className="text-center mb-4 relative">
              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
@@ -155,11 +154,9 @@ function App() {
           </div>
         </div>
 
-        {/* 历史列表 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-200"><span className="text-xs text-gray-500 font-bold uppercase">History Records</span></div>
           <div className="divide-y divide-gray-100">
-            {/* 修正点：这里改用 historyList */}
             {historyList.map((item) => (
               <div key={item.id} className="p-3 flex flex-col gap-2 hover:bg-gray-50 transition-colors">
                 <div className="flex justify-between items-center">
