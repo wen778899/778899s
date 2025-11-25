@@ -3,52 +3,57 @@ import Ball from './components/Ball';
 
 function App() {
   const [data, setData] = useState(null);
+  const [predHistory, setPredHistory] = useState([]); // 战绩数据
   const [loading, setLoading] = useState(true);
+  const [limit, setLimit] = useState(50);
+  const [expanding, setExpanding] = useState(false);
   const [expandHistory, setExpandHistory] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = async (currentLimit) => {
     try {
-      const apiUrl = `${import.meta.env.VITE_API_URL}?action=get_data&t=${Date.now()}`;
-      const res = await fetch(apiUrl);
+      // 1. 获取主数据
+      const res = await fetch(`${import.meta.env.VITE_API_URL}?action=get_data&limit=${currentLimit}&t=${Date.now()}`);
       const json = await res.json();
       if (json.status === 'success') setData(json.data);
+      
+      // 2. 获取战绩数据
+      const resHist = await fetch(`${import.meta.env.VITE_API_URL}?action=get_history&t=${Date.now()}`);
+      const jsonHist = await resHist.json();
+      if (jsonHist.status === 'success') setPredHistory(jsonHist.data);
+
     } catch (error) {
-      console.error('Failed to fetch', error);
+      console.error(error);
     } finally {
       setLoading(false);
+      setExpanding(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(limit); }, [limit]);
 
-  if (loading) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">正在分析数据模型...</div>;
-  if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
+  const handleLoadMore = () => {
+    setExpanding(true);
+    setLimit(limit + 50);
+  };
+
+  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">AI 计算中...</div>;
+  if (!data) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
 
   const latestDraw = data.history[0];
-  const fullHistoryList = data.history.slice(1);
-  const displayList = expandHistory ? fullHistoryList : fullHistoryList.slice(0, 10);
-  const remainingCount = fullHistoryList.length - 10;
+  const historyList = data.history.slice(1);
+  const totalInDb = data.total_count || historyList.length;
+  const hasMore = historyList.length < (totalInDb - 1); 
 
-  // --- 预测数据解析 ---
   const pred = data.prediction;
   const sixXiao = pred.six_xiao || [];
   const threeXiao = pred.three_xiao || sixXiao.slice(0, 3);
-  
-  let primaryWave = 'red';
-  let secondaryWave = 'blue';
-  
-  if (pred.color_wave && typeof pred.color_wave === 'object') {
-    primaryWave = pred.color_wave.primary;
-    secondaryWave = pred.color_wave.secondary;
-  }
+  let w1 = 'red', w2 = 'blue';
+  if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
 
   const waveStyles = {
     red: 'bg-red-600 border-red-500 text-white',
     blue: 'bg-blue-600 border-blue-500 text-white',
     green: 'bg-emerald-600 border-emerald-500 text-white'
-  };
-  const waveTextStyles = {
-    red: 'text-red-500', blue: 'text-blue-500', green: 'text-emerald-500'
   };
   const waveNames = { red: '红', blue: '蓝', green: '绿' };
 
@@ -61,74 +66,77 @@ function App() {
             <span className="text-xl">🤖</span>
             <h1 className="text-lg font-bold text-gray-800">AI 智能分析</h1>
           </div>
-          <div className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-500">
-            第 {latestDraw.issue} 期已开
-          </div>
+          <div className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-500">第 {latestDraw.issue} 期</div>
         </div>
       </header>
 
-      {/* === 预测横幅 === */}
+      {/* 预测横幅 */}
       <div className="bg-slate-900 text-white shadow-xl relative overflow-hidden">
         <div className="max-w-2xl mx-auto px-4 py-5 relative z-10">
-          
           <div className="flex justify-between items-center mb-4">
              <div>
                <div className="text-[10px] text-indigo-300 uppercase tracking-widest">Next Prediction</div>
                <div className="text-2xl font-bold text-white">第 {data.next_issue} 期</div>
              </div>
              <div className="text-right">
-                <div className="text-[10px] text-gray-400">算法模型</div>
-                <div className="text-xs bg-indigo-600 px-2 py-0.5 rounded text-white">{pred.strategy_used || 'AI回测'}</div>
+                <div className="text-[10px] text-gray-400">模型</div>
+                <div className="text-[10px] bg-indigo-600 px-2 py-0.5 rounded text-white truncate w-24 text-center">V6泰坦矩阵</div>
              </div>
           </div>
-
-          {/* 三肖区 */}
           <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-               <span className="text-xs font-bold text-yellow-400">🔥 核心三肖</span>
-            </div>
+            <div className="flex items-center gap-2 mb-2"><span className="text-xs font-bold text-yellow-400">🔥 核心三肖</span></div>
             <div className="grid grid-cols-3 gap-3">
               {threeXiao.map((z, i) => (
-                <div key={i} className="h-10 flex items-center justify-center bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-lg text-lg font-bold text-white shadow-lg border border-yellow-500/50">
-                  {z}
-                </div>
+                <div key={i} className="h-10 flex items-center justify-center bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-lg text-lg font-bold text-white shadow-lg border border-yellow-500/50">{z}</div>
               ))}
             </div>
           </div>
-
-          {/* 波色区 (新设计) */}
           <div className="flex gap-3 mb-4">
-             {/* 左侧：推荐范围 */}
-             <div className="flex-1 bg-slate-800/60 rounded-lg p-2 border border-slate-700">
-                <div className="text-[10px] text-gray-400 mb-1">推荐波色</div>
-                <div className="flex items-center gap-2 font-bold text-sm">
-                   <span className={waveTextStyles[primaryWave]}>{waveNames[primaryWave]}波</span>
-                   <span className="text-gray-600">/</span>
-                   <span className={waveTextStyles[secondaryWave]}>{waveNames[secondaryWave]}波</span>
-                </div>
+             <div className="flex-1 bg-slate-800/60 rounded-lg p-2 border border-slate-700 flex items-center justify-between">
+                <span className="text-xs text-gray-400">推荐</span>
+                <div className="font-bold text-sm"><span className={`mr-1 ${w1=='red'?'text-red-400':w1=='blue'?'text-blue-400':'text-green-400'}`}>{waveNames[w1]}</span>/<span className={`ml-1 ${w2=='red'?'text-red-400':w2=='blue'?'text-blue-400':'text-green-400'}`}>{waveNames[w2]}</span></div>
              </div>
-             {/* 右侧：主攻 */}
-             <div className={`flex-1 rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[primaryWave]}`}>
+             <div className={`flex-1 rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[w1]}`}>
                 <div className="absolute top-0 left-0 bg-white/20 text-[8px] px-1 rounded-br">主攻</div>
-                <div className="font-bold text-lg leading-none">{waveNames[primaryWave]}波</div>
+                <div className="font-bold text-lg leading-none">{waveNames[w1]}波</div>
              </div>
           </div>
-
-          {/* 六肖防守 */}
           <div className="flex items-center gap-2 opacity-60">
              <span className="text-xs">防守:</span>
-             <div className="flex gap-1">
-                {sixXiao.slice(3).map((z, i) => (
-                   <span key={i} className="text-xs font-mono bg-white/10 px-1.5 rounded">{z}</span>
-                ))}
-             </div>
+             <div className="flex gap-1">{sixXiao.slice(3).map((z, i) => <span key={i} className="text-xs font-mono bg-white/10 px-1.5 rounded">{z}</span>)}</div>
           </div>
-
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
-        {/* 最新开奖 (保持不变) */}
+        
+        {/* === 战绩红黑榜 (新) === */}
+        {predHistory.length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+              <span className="text-xs text-gray-500 font-bold uppercase">AI Accuracy</span>
+              <span className="text-[10px] text-gray-400">近20期验证</span>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {predHistory.map((item) => (
+                <div key={item.issue} className="p-3 flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                     <span className="font-mono text-gray-600 font-bold">{item.issue}期</span>
+                     <span className="text-xs text-gray-400">开: {item.result_zodiac}</span>
+                  </div>
+                  <div className="flex gap-2">
+                     <span className={`px-2 py-0.5 rounded text-xs font-bold ${item.is_hit_six == 1 ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-400'}`}>
+                       {item.is_hit_six == 1 ? '六肖中' : '错'}
+                     </span>
+                     {item.is_hit_three == 1 && <span className="px-2 py-0.5 rounded text-xs font-bold bg-yellow-50 text-yellow-600">三肖中</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 最新结果 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
           <div className="text-center mb-4 relative">
              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
@@ -136,53 +144,42 @@ function App() {
           </div>
           <div className="flex flex-col items-center">
             <div className="flex justify-center flex-wrap gap-2 mb-4 w-full">
-              {latestDraw.normals.map((ball, idx) => (
-                <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="lg" />
-              ))}
+              {latestDraw.normals.map((ball, idx) => <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="lg" />)}
             </div>
             <div className="flex items-center justify-center gap-3 w-full mb-2">
-               <div className="h-px bg-gray-200 w-12"></div>
-               <span className="text-lg font-light text-gray-300">+</span>
-               <div className="h-px bg-gray-200 w-12"></div>
+               <div className="h-px bg-gray-200 w-12"></div><span className="text-lg font-light text-gray-300">+</span><div className="h-px bg-gray-200 w-12"></div>
             </div>
             <Ball num={latestDraw.spec.num} color={latestDraw.spec.color} zodiac={latestDraw.spec.zodiac} size="xl" isSpec={true} />
           </div>
         </div>
 
-        {/* 历史记录 (保持不变) */}
+        {/* 历史列表 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <span className="text-xs text-gray-500 font-bold uppercase">History</span>
-          </div>
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200"><span className="text-xs text-gray-500 font-bold uppercase">History Records</span></div>
           <div className="divide-y divide-gray-100">
             {displayList.map((item) => (
               <div key={item.id} className="p-3 flex flex-col gap-2 hover:bg-gray-50 transition-colors">
                 <div className="flex justify-between items-center">
                    <div className="flex items-center gap-2">
                       <span className="text-sm font-mono font-bold text-gray-700">No.{item.issue}</span>
-                      <div className={`w-2 h-2 rounded-full ${item.spec.color === 'red' ? 'bg-red-500' : item.spec.color === 'blue' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
+                      <div className={`w-2 h-2 rounded-full ${waveStyles[item.spec.color].split(' ')[0]}`}></div>
                    </div>
                    <span className="text-[10px] text-gray-400">{item.created_at?.substring(5, 16)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex gap-1 overflow-x-auto no-scrollbar w-full mr-2 pb-1">
-                    {item.normals.map((ball, idx) => (
-                      <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="sm" />
-                    ))}
+                    {item.normals.map((ball, idx) => <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="sm" />)}
                   </div>
                   <div className="w-px h-6 bg-gray-200 mx-1 flex-shrink-0"></div>
-                  <div className="flex-shrink-0">
-                    <Ball num={item.spec.num} color={item.spec.color} zodiac={item.spec.zodiac} size="md" isSpec={true} />
-                  </div>
+                  <div className="flex-shrink-0"><Ball num={item.spec.num} color={item.spec.color} zodiac={item.spec.zodiac} size="md" isSpec={true} /></div>
                 </div>
               </div>
             ))}
           </div>
-          {!expandHistory && remainingCount > 0 && (
-            <button onClick={() => setExpandHistory(true)} className="w-full py-3 text-sm text-indigo-600 font-bold bg-gray-50 border-t border-gray-100">⬇️ 展开剩余 {remainingCount} 期</button>
-          )}
-          {expandHistory && (
-             <button onClick={() => setExpandHistory(false)} className="w-full py-3 text-sm text-gray-500 bg-gray-50 border-t border-gray-100">⬆️ 收起</button>
+          {hasMore ? (
+            <button onClick={handleLoadMore} disabled={expanding} className="w-full py-3 text-sm text-indigo-600 font-bold hover:bg-gray-50 border-t border-gray-100">{expanding?'加载中...':'⬇️ 加载更多历史'}</button>
+          ) : (
+            <div className="w-full py-3 text-xs text-gray-400 text-center">已显示全部</div>
           )}
         </div>
       </div>
