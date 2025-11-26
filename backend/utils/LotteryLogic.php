@@ -4,19 +4,18 @@ require_once 'Db.php';
 
 class LotteryLogic {
     
-    // --- 基础工具 ---
     private static function getFullAttr($num) { return ZodiacManager::getInfo($num); }
     private static function initScoreBoard() { $z = ZodiacManager::getMapping(); return array_fill_keys(array_keys($z), 0); }
     private static function normalize(&$s) { $m=max($s); if($m>0) foreach($s as $k=>$v) $s[$k]=($v/$m)*100; }
 
-    // --- 模型 ---
+    // --- 10大模型 (M1-M10) ---
     private static function m_Trend($h) {
         $s = self::initScoreBoard(); $l = min(count($h),30);
         for($i=0;$i<$l;$i++) { $z=ZodiacManager::getInfo($h[$i]['spec'])['zodiac']; $s[$z]+=($i<10?3:1); }
         self::normalize($s); return $s;
     }
     private static function m_Omission($h) {
-        $s = self::initScoreBoard(); 
+        $s = self::initScoreBoard();
         foreach(array_keys($s) as $z) {
             $c=0; foreach($h as $r) { if(ZodiacManager::getInfo($r['spec'])['zodiac']==$z) break; $c++; }
             $s[$z]+=floor($c/10)*10;
@@ -24,7 +23,7 @@ class LotteryLogic {
         self::normalize($s); return $s;
     }
     private static function m_Link($h) {
-        $s = self::initScoreBoard(); if($h){ $z=ZodiacManager::getInfo($h[0]['spec'])['zodiac']; 
+        $s = self::initScoreBoard(); if($h){ $z=ZodiacManager::getInfo($h[0]['spec'])['zodiac'];
         foreach(ZodiacManager::getRelatedZodiacs($z) as $r) $s[$r]+=10; } self::normalize($s); return $s;
     }
     private static function m_Tail($h) {
@@ -49,7 +48,7 @@ class LotteryLogic {
         self::normalize($s); return $s;
     }
     private static function m_WuXing($h) {
-        $s = self::initScoreBoard(); if($h){ $l=ZodiacManager::getInfo($h[0]['spec'])['element']; 
+        $s = self::initScoreBoard(); if($h){ $l=ZodiacManager::getInfo($h[0]['spec'])['element'];
         $g=['金'=>'水','水'=>'木','木'=>'火','火'=>'土','土'=>'金']; $t=$g[$l]??'';
         $map=ZodiacManager::getMapping(); foreach($s as $z=>$v) foreach($map[$z] as $n) if(ZodiacManager::getInfo($n)['element']==$t){$s[$z]+=10;break;} }
         self::normalize($s); return $s;
@@ -75,10 +74,9 @@ class LotteryLogic {
         self::normalize($s); return $s;
     }
 
-    // --- 遗传算法 ---
     private static function createGene() {
-        return ['w_trend'=>rand(0,100)/10, 'w_omiss'=>rand(0,100)/10, 'w_link'=>rand(0,100)/10, 'w_tail'=>rand(0,100)/10, 
-                'w_head'=>rand(0,100)/10, 'w_color'=>rand(0,100)/10, 'w_wuxing'=>rand(0,100)/10, 'w_hist'=>rand(0,100)/10, 
+        return ['w_trend'=>rand(0,100)/10, 'w_omiss'=>rand(0,100)/10, 'w_link'=>rand(0,100)/10, 'w_tail'=>rand(0,100)/10,
+                'w_head'=>rand(0,100)/10, 'w_color'=>rand(0,100)/10, 'w_wuxing'=>rand(0,100)/10, 'w_hist'=>rand(0,100)/10,
                 'w_flat'=>rand(0,100)/10, 'w_off'=>rand(0,100)/10, 'fitness'=>0];
     }
 
@@ -94,21 +92,36 @@ class LotteryLogic {
     }
 
     public static function evolveStep($history, $population) {
-        // 【核心修改】回测范围扩大到 50 期
-        $TEST_RANGE = 50;
+        // 【核心升级】回测深度增加到 80 期
+        $TEST_RANGE = 80;
         
+        // 预先计算这80期的模型分数，避免在循环中重复计算 (性能优化关键)
+        // 这是一个内存换时间的策略
+        $modelCache = [];
+        for ($t=0; $t<$TEST_RANGE; $t++) {
+            $mockH = array_slice($history, $t+1);
+            if(count($mockH)<50) break;
+            $modelCache[$t] = [
+                'res' => ZodiacManager::getInfo($history[$t]['spec'])['zodiac'],
+                'ms'  => [
+                    self::m_Trend($mockH), self::m_Omission($mockH), self::m_Link($mockH), self::m_Tail($mockH),
+                    self::m_Head($mockH), self::m_Color($mockH), self::m_WuXing($mockH), self::m_History($mockH),
+                    self::m_FlatCode($mockH), self::m_Offset($mockH)
+                ]
+            ];
+        }
+
         foreach ($population as &$gene) {
             $score = 0;
-            for ($t=0; $t<$TEST_RANGE; $t++) {
-                $mockH = array_slice($history, $t+1);
-                // 数据太少时停止回测
-                if(count($mockH)<50) break;
-                
-                $res = ZodiacManager::getInfo($history[$t]['spec'])['zodiac'];
-                $rank = self::runPrediction($mockH, $gene);
-                
-                if(in_array($res, array_slice($rank,0,6))) $score+=10;
-                if(in_array($res, array_slice($rank,0,3))) $score+=30;
+            $ws = [$gene['w_trend'], $gene['w_omiss'], $gene['w_link'], $gene['w_tail'], $gene['w_head'],
+                   $gene['w_color'], $gene['w_wuxing'], $gene['w_hist'], $gene['w_flat'], $gene['w_off']];
+            
+            foreach ($modelCache as $data) {
+                $f = self::initScoreBoard();
+                foreach($f as $z=>$v) for($i=0;$i<10;$i++) $f[$z] += $data['ms'][$i][$z] * $ws[$i];
+                arsort($f); $rank = array_keys($f);
+                if(in_array($data['res'], array_slice($rank,0,6))) $score+=10;
+                if(in_array($data['res'], array_slice($rank,0,3))) $score+=30;
             }
             $gene['fitness'] = $score;
         }
@@ -120,7 +133,10 @@ class LotteryLogic {
         $size = count($population); $elite = intval($size/2); $newPop = array_slice($population, 0, $elite);
         while(count($newPop) < $size) {
             $p1 = $population[rand(0,$elite-1)]; $p2 = $population[rand(0,$elite-1)]; $child = $p1;
-            if(rand(0,100)<20) { $keys=array_keys($child); $k=$keys[array_rand($keys)]; if($k!='fitness')$child[$k]=rand(0,100)/10; }
+            if(rand(0,100)<30) { // 变异率提升到30%
+                $keys=['w_trend','w_omiss','w_link','w_tail','w_wuxing','w_hist'];
+                $child[$keys[array_rand($keys)]] = rand(0,100)/10;
+            }
             $newPop[] = $child;
         }
         return ['population'=>$newPop, 'best'=>$bestGene];
@@ -135,7 +151,6 @@ class LotteryLogic {
 
     public static function generateResult($history, $bestGene, $genCount) {
         $ranking = self::runPrediction($history, $bestGene);
-        $killed = end($ranking); // 倒数第一名作为杀肖
         $six = array_slice($ranking, 0, 6);
         $three = array_slice($ranking, 0, 3);
         
@@ -144,15 +159,14 @@ class LotteryLogic {
         foreach($three as $z) foreach($map[$z] as $n) { $i=ZodiacManager::getInfo($n); $w=($i['element']=='金'||$i['element']=='水')?1.5:1; $wc[$i['color']]+=$w; }
         arsort($wc); $w=array_keys($wc);
         $bsoe = self::predict_BS_OE($history);
+        $killed=end($ranking);
 
         return [
             'killed' => $killed,
-            'six_xiao' => $six, 
-            'three_xiao' => $three,
+            'six_xiao' => $six, 'three_xiao' => $three,
             'color_wave' => ['primary'=>$w[0], 'secondary'=>$w[1]],
-            'bs' => $bsoe['bs'], 
-            'oe' => $bsoe['oe'],
-            'strategy_used' => "进化{$genCount}代 | 分:{$bestGene['fitness']}"
+            'bs' => $bsoe['bs'], 'oe' => $bsoe['oe'],
+            'strategy_used' => "V9高算力版({$genCount}代 | F:{$bestGene['fitness']})"
         ];
     }
     

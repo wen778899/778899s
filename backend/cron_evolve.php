@@ -10,7 +10,6 @@ require_once 'utils/ZodiacManager.php';
 
 Env::load(__DIR__ . '/.env');
 
-// 1. 启动前先检查开关
 if (Settings::get('is_evolving') !== '1') exit;
 
 function editMsgFromCron($chatId, $msgId, $text) {
@@ -21,6 +20,7 @@ function editMsgFromCron($chatId, $msgId, $text) {
     $ch = curl_init(); curl_setopt($ch, CURLOPT_URL, $url); curl_setopt($ch, CURLOPT_POST, 1); curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); curl_exec($ch); curl_close($ch);
 }
 
+// --- 保持与 Webhook 一致的丰富展示 ---
 function getProgressMsg($gen, $pred, $isEvolving) {
     $statusIcon = ($isEvolving == '1') ? "⚡ 进化中" : "💤 已停止";
     $score = 0; if (isset($pred['strategy_used']) && preg_match('/分:([\d\.]+)/', $pred['strategy_used'], $m)) $score = $m[1];
@@ -29,27 +29,34 @@ function getProgressMsg($gen, $pred, $isEvolving) {
     $stmt = $pdo->query("SELECT issue FROM lottery_records ORDER BY issue DESC LIMIT 1");
     $nextIssue = ($stmt->fetch()['issue'] ?? 0) + 1;
     
-    $sxEmoji = ['鼠'=>'🐀','牛'=>'🐂','虎'=>'🐅','兔'=>'🐇','龙'=>'🐉','蛇'=>'🐍','马'=>'🐎','羊'=>'🐏','猴'=>'🐒','鸡'=>'🐓','狗'=>'🐕','猪'=>'🐖'];
-    $threeStr = ""; if(isset($pred['three_xiao'])) foreach ($pred['three_xiao'] as $sx) $threeStr .= ($sxEmoji[$sx]??'') . $sx . " ";
-    
     $cMap = ['red'=>'红','blue'=>'蓝','green'=>'绿'];
+    $sixStr = implode(" ", $pred['six_xiao']); 
+    $threeStr = implode(" ", $pred['three_xiao']); 
     $w1 = $cMap[$pred['color_wave']['primary']] ?? '';
     $w2 = $cMap[$pred['color_wave']['secondary']] ?? '';
+    $bs = $pred['bs'] ?? '-';
+    $oe = $pred['oe'] ?? '-';
+    $killed = $pred['killed'] ?? '-';
+    
+    $timeStr = date("H:i:s");
+    $load = ['🟩⬜⬜⬜⬜', '🟩🟩⬜⬜⬜', '🟩🟩🟩⬜⬜', '🟩🟩🟩🟩⬜', '🟩🟩🟩🟩🟩']; $bar = $load[time() % 5];
 
-    $msg = "🧬 *AI 深度进化监控*\n";
-    $msg .= "📊 *进度*: 第 `{$gen}` 代 (50期回测)\n";
-    $msg .= "🧠 *适应度*: {$score}\n";
-    $msg .= "----------------------\n";
-    $msg .= "🎯 *目标*: 第 {$nextIssue} 期\n";
-    $msg .= "🚫 *杀肖*: {$pred['killed']}\n";
-    $msg .= "🦁 *六肖*: " . implode(" ", $pred['six_xiao']) . "\n";
-    $msg .= "🔥 *三肖*: " . implode(" ", $pred['three_xiao']) . "\n";
+    $msg = "🧬 *AI 进化监控台*\n";
+    $msg .= "------------------\n";
+    $msg .= "💓 引擎全速运行\n";
+    $msg .= "{$statusIcon} | 进化 `{$gen}` 代\n";
+    $msg .= "{$bar}\n";
+    $msg .= "------------------\n";
+    $msg .= "🎯 目标：*{$nextIssue}*\n";
+    $msg .= "🧠 适应度：`{$score}`\n";
+    $msg .= "🚫 *暂杀*: {$killed}\n";
+    $msg .= "🦁 *暂六*: {$sixStr}\n";
+    $msg .= "🔥 *暂三*: {$threeStr}\n";
     $msg .= "🌊 *波色*: {$w1} / {$w2}\n";
     $msg .= "👊 *主攻*: {$w1}\n";
-    $msg .= "⚖️ *属性*: {$pred['bs']} / {$pred['oe']}\n";
-    $msg .= "----------------------\n";
-    $msg .= "🕒 " . date("H:i:s");
-    
+    $msg .= "⚖️ *属性*: {$bs} / {$oe}\n";
+    $msg .= "------------------\n";
+    $msg .= "🕒 {$timeStr}";
     return $msg;
 }
 
@@ -70,42 +77,26 @@ try {
     }
 
     $start = time();
-    $loopCount = 0;
-
-    // 2. 循环计算 (带实时刹车)
     while(time() - $start < 50) {
-        // 【关键修复】每算3代检查一次开关，如果关了立刻退出，释放服务器资源
-        if ($loopCount % 3 == 0) {
-            if (Settings::get('is_evolving') !== '1') {
-                // 保存当前进度后退出
-                Settings::set('evolution_population', json_encode($population));
-                Settings::set('evolution_gen', $gen);
-                exit;
-            }
+        if (Settings::get('is_evolving') !== '1') break;
+        // 每次跑50代，减少IO
+        for($k=0; $k<50; $k++) {
+            $res = LotteryLogic::evolveStep($history, $population);
+            $population = $res['population']; $bestGene = $res['best']; $gen++;
         }
-
-        $res = LotteryLogic::evolveStep($history, $population);
-        $population = $res['population']; 
-        $bestGene = $res['best']; 
-        $gen++;
-        $loopCount++;
     }
 
-    // 3. 正常结束保存
     Settings::set('evolution_population', json_encode($population));
     Settings::set('evolution_gen', $gen);
     $pred = LotteryLogic::generateResult($history, $bestGene, $gen);
     Settings::set('staging_prediction', json_encode($pred));
     Settings::set('last_cron_run', time());
 
-    // 每10代更新消息
     if ($gen % 10 == 0) {
         $chatId = Settings::get('progress_chat_id');
         $msgId = Settings::get('progress_msg_id');
         if ($chatId && $msgId) editMsgFromCron($chatId, $msgId, getProgressMsg($gen, $pred, '1'));
     }
 
-} catch (Exception $e) {
-    echo $e->getMessage();
-}
+} catch (Exception $e) { echo $e->getMessage(); }
 ?>

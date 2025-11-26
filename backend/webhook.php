@@ -16,16 +16,7 @@ function sendMsg($chatId, $text, $keyboard = null) {
     $url = "https://api.telegram.org/bot$token/sendMessage";
     $data = ['chat_id' => $chatId, 'text' => $text, 'parse_mode' => 'Markdown'];
     if ($keyboard) $data['reply_markup'] = json_encode($keyboard);
-    
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    $res = curl_exec($ch);
-    curl_close($ch);
-    return json_decode($res, true);
+    $ch = curl_init(); curl_setopt($ch, CURLOPT_URL, $url); curl_setopt($ch, CURLOPT_POST, 1); curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); $res = curl_exec($ch); curl_close($ch); return json_decode($res, true);
 }
 
 function editMsg($chatId, $msgId, $text, $keyboard = null) {
@@ -33,14 +24,7 @@ function editMsg($chatId, $msgId, $text, $keyboard = null) {
     $url = "https://api.telegram.org/bot$token/editMessageText";
     $data = ['chat_id' => $chatId, 'message_id' => $msgId, 'text' => $text, 'parse_mode' => 'Markdown'];
     if ($keyboard) $data['reply_markup'] = json_encode($keyboard);
-    
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_exec($ch);
-    curl_close($ch);
+    $ch = curl_init(); curl_setopt($ch, CURLOPT_URL, $url); curl_setopt($ch, CURLOPT_POST, 1); curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); curl_exec($ch); curl_close($ch);
 }
 
 function answerCallback($callbackId, $text = null) {
@@ -60,23 +44,12 @@ function cleanText($text) {
     return trim($text);
 }
 
-// --- 修正后的启动逻辑 ---
 function startEvolution() {
-    // 1. 重置数据库状态
     Settings::set('is_evolving', '1');
     Settings::set('evolution_gen', '0');
     Settings::set('evolution_population', ''); 
-    
-    // 2. 唤醒后台计算 (修正为根目录路径)
-    // 注意：这里硬编码了你的域名，确保准确无误
-    $url = "https://9526.ip-ddns.com/cron_evolve.php";
-    
-    // 发送非阻塞请求
-    $ctx = stream_context_create([
-        'http' => ['timeout' => 1],
-        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false]
-    ]);
-    @file_get_contents($url, false, $ctx);
+    $url = "https://" . $_SERVER['HTTP_HOST'] . "/backend/cron_evolve.php";
+    $ctx = stream_context_create(['http' => ['timeout' => 1]]); @file_get_contents($url, false, $ctx);
 }
 
 function getProgressMsg() {
@@ -89,35 +62,47 @@ function getProgressMsg() {
     $cronStatus = ($timeDiff < 120) ? "💓 引擎正常" : "💀 引擎停跳";
     $statusIcon = ($isEvolving == '1') ? "⚡ 进化中" : "💤 已暂停";
     
-    $cMap = ['red'=>'红','blue'=>'蓝','green'=>'绿'];
+    $load = ['🟩⬜⬜⬜⬜', '🟩🟩⬜⬜⬜', '🟩🟩🟩⬜⬜', '🟩🟩🟩🟩⬜', '🟩🟩🟩🟩🟩'];
+    $bar = $load[time() % 5];
 
     if ($json) {
         $pred = json_decode($json, true);
-        $score = 0;
-        if (isset($pred['strategy_used']) && preg_match('/分:([\d\.]+)/', $pred['strategy_used'], $m)) $score = $m[1];
+        $score = 0; if (isset($pred['strategy_used']) && preg_match('/分:([\d\.]+)/', $pred['strategy_used'], $m)) $score = $m[1];
         
         $pdo = Db::connect();
         $stmt = $pdo->query("SELECT issue FROM lottery_records ORDER BY issue DESC LIMIT 1");
         $nextIssue = ($stmt->fetch()['issue'] ?? 0) + 1;
         
-        $msg = "🧬 *AI 深度进化监控*\n";
+        $cMap = ['red'=>'红','blue'=>'蓝','green'=>'绿'];
+        $sixStr = implode(" ", $pred['six_xiao']); 
+        $threeStr = implode(" ", $pred['three_xiao']); 
+        $w1 = $cMap[$pred['color_wave']['primary']] ?? '';
+        $w2 = $cMap[$pred['color_wave']['secondary']] ?? '';
+        $bs = $pred['bs'] ?? '-';
+        $oe = $pred['oe'] ?? '-';
+        $killed = $pred['killed'] ?? '-';
+        
+        $timeStr = date("H:i:s");
+
+        $msg = "🧬 *AI 进化监控台*\n";
         $msg .= "------------------\n";
-        $msg .= "{$statusIcon} | {$cronStatus}\n";
-        $msg .= "📊 *进度*: 第 `{$gen}` 代\n";
-        $msg .= "🧠 *适应度*: {$score}\n";
-        $msg .= "----------------------\n";
-        $msg .= "🎯 *目标*: 第 {$nextIssue} 期\n";
-        $msg .= "🚫 *杀肖*: {$pred['killed']}\n";
-        $msg .= "🦁 *六肖*: " . implode(" ", $pred['six_xiao']) . "\n";
-        $msg .= "🔥 *三肖*: " . implode(" ", $pred['three_xiao']) . "\n";
-        $msg .= "🌊 *波色*: {$cMap[$pred['color_wave']['primary']]} / {$cMap[$pred['color_wave']['secondary']]}\n";
-        $msg .= "👊 *主攻*: {$cMap[$pred['color_wave']['primary']]}\n";
-        $msg .= "⚖️ *属性*: {$pred['bs']} / {$pred['oe']}\n";
-        $msg .= "----------------------\n";
-        $msg .= "🕒 " . date("H:i:s");
+        $msg .= "{$cronStatus}\n";
+        $msg .= "{$statusIcon} | 进度 `{$gen}` 代\n";
+        $msg .= "{$bar}\n";
+        $msg .= "------------------\n";
+        $msg .= "🎯 目标：*{$nextIssue}*\n";
+        $msg .= "🧠 适应度：`{$score}`\n";
+        $msg .= "🚫 *暂杀*: {$killed}\n";
+        $msg .= "🦁 *暂六*: {$sixStr}\n";
+        $msg .= "🔥 *暂三*: {$threeStr}\n";
+        $msg .= "🌊 *波色*: {$w1} / {$w2}\n";
+        $msg .= "👊 *主攻*: {$w1}\n";
+        $msg .= "⚖️ *属性*: {$bs} / {$oe}\n";
+        $msg .= "------------------\n";
+        $msg .= "🕒 {$timeStr} (实时)";
         return $msg;
     } else {
-        return "⏳ AI 初始化中...\n{$cronStatus}\n请等待几秒钟...";
+        return "⏳ AI 初始化中...\n{$cronStatus}\n请等待...";
     }
 }
 
@@ -125,6 +110,7 @@ $content = file_get_contents("php://input");
 $update = json_decode($content, true);
 if (!$update) exit('ok');
 
+// 1. 处理回调按钮 (修复刷新无反应)
 if (isset($update['callback_query'])) {
     $cq = $update['callback_query'];
     $chatId = $cq['message']['chat']['id'];
@@ -132,22 +118,27 @@ if (isset($update['callback_query'])) {
     $data = $cq['data'];
 
     if ($data === 'refresh_progress') {
+        // 先给个弹窗反馈
+        answerCallback($cq['id'], "正在获取最新数据...");
+        
         $text = getProgressMsg();
+        
+        // 强制差异化：加一个随机后缀，确保 TG 认为内容变了
+        $icons = ['✨','🔥','⚡','🚀','💫'];
+        $text .= " " . $icons[rand(0, 4)];
+        
         $keyboard = ['inline_keyboard' => [[['text' => '🔄 立即刷新', 'callback_data' => 'refresh_progress']]]];
         editMsg($chatId, $msgId, $text, $keyboard);
+        
         Settings::set('progress_msg_id', $msgId);
         Settings::set('progress_chat_id', $chatId);
-        answerCallback($cq['id'], "已刷新");
     }
     exit('ok');
 }
 
 $msgType = isset($update['channel_post']) ? 'channel_post' : (isset($update['message']) ? 'message' : '');
 if (!$msgType) exit('ok');
-
-$data = $update[$msgType];
-$rawText = $data['text'] ?? ($data['caption'] ?? '');
-$chatId = $data['chat']['id'];
+$data = $update[$msgType]; $rawText = $data['text'] ?? ($data['caption'] ?? ''); $chatId = $data['chat']['id'];
 
 $text = cleanText($rawText);
 preg_match('/第[:：]?\s*(\d+)\s*期/u', $text, $issueMatch);
@@ -168,7 +159,7 @@ if (!empty($issueMatch)) {
             $stmt->execute($params);
             
             LotteryLogic::verifyPrediction($issue, $nums[6]);
-            startEvolution(); // 自动触发
+            startEvolution();
             
             if ($msgType === 'message') {
                 sendMsg($chatId, "✅ *录入成功* - 第 `{$issue}` 期\n🧬 进化引擎已启动...");
@@ -197,7 +188,6 @@ if ($msgType === 'message') {
         if ($rawText === '/start') {
             sendMsg($chatId, "👋 系统就绪", $mainKeyboard);
         }
-        
         elseif ($rawText === '🔮 查看计算进度') {
             $msg = getProgressMsg();
             $inlineKeyboard = ['inline_keyboard' => [[['text' => '🔄 立即刷新', 'callback_data' => 'refresh_progress']]]];
@@ -207,7 +197,6 @@ if ($msgType === 'message') {
                 Settings::set('progress_chat_id', $chatId);
             }
         }
-        
         elseif ($rawText === '🚀 发布预测到前端') {
             $staging = Settings::get('staging_prediction');
             if (!$staging) {
@@ -231,31 +220,23 @@ if ($msgType === 'message') {
                 sendMsg($chatId, "✅ **已发布！**");
             }
         }
-        
         elseif ($rawText === '📊 查看最新录入') {
              $pdo = Db::connect();
              $stmt = $pdo->query("SELECT * FROM lottery_records ORDER BY issue DESC LIMIT 1");
              $row = $stmt->fetch();
              if ($row) sendMsg($chatId, "📅 *最新: 第 {$row['issue']} 期*\n🔢 `{$row['n1']} {$row['n2']} {$row['n3']} {$row['n4']} {$row['n5']} {$row['n6']} + {$row['spec']}`");
         }
-        elseif ($rawText === '⚙️ 设置生肖数据') {
-             sendMsg($chatId, "🛠 发 JSON");
-        }
+        elseif ($rawText === '⚙️ 设置生肖数据') { sendMsg($chatId, "🛠 发 JSON"); }
         elseif (strpos(trim($rawText), '{') === 0) {
              $json = json_decode($rawText, true);
-             if ($json && count($json) >= 12) {
-                 Settings::set('zodiac_config', $rawText);
-                 startEvolution(); 
-                 sendMsg($chatId, "✅ 配置更新");
-             }
+             if ($json && count($json) >= 12) { Settings::set('zodiac_config', $rawText); startEvolution(); sendMsg($chatId, "✅ 配置更新"); }
         }
         elseif (preg_match('/^删除(\d+)$/', $rawText, $delMatch)) {
              $delIssue = $delMatch[1];
              $pdo = Db::connect();
              $stmt = $pdo->prepare("DELETE FROM lottery_records WHERE issue = ?");
              $stmt->execute([$delIssue]);
-             if($stmt->rowCount()>0) { startEvolution(); sendMsg($chatId, "🗑 已删除"); }
-             else sendMsg($chatId, "⚠️ 未找到");
+             if($stmt->rowCount()>0) { startEvolution(); sendMsg($chatId, "🗑 已删除"); } else sendMsg($chatId, "⚠️ 未找到");
         }
     }
 }
