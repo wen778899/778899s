@@ -4,15 +4,22 @@ import Ball from './components/Ball';
 
 function App() {
   const [data, setData] = useState(null);
+  const [predHistory, setPredHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(50);
   const [expanding, setExpanding] = useState(false);
 
   const fetchData = async (currentLimit) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}?action=get_data&limit=${currentLimit}&t=${Date.now()}`);
+      // 加个随机数防止缓存
+      const t = new Date().getTime();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}?action=get_data&limit=${currentLimit}&_t=${t}`);
       const json = await res.json();
       if (json.status === 'success') setData(json.data);
+      
+      const resHist = await fetch(`${import.meta.env.VITE_API_URL}?action=get_history&_t=${t}`);
+      const jsonHist = await resHist.json();
+      if (jsonHist.status === 'success') setPredHistory(jsonHist.data);
     } catch (error) {
       console.error(error);
     } finally {
@@ -28,17 +35,20 @@ function App() {
     setLimit(limit + 50);
   };
 
-  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">AI 计算中...</div>;
-  if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
+  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">正在连接 AI 引擎...</div>;
+  if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无历史数据</div>;
 
   const latestDraw = data.history[0];
   const historyList = data.history.slice(1);
   const totalInDb = data.total_count || historyList.length;
   const hasMore = historyList.length < (totalInDb - 1); 
 
-  const pred = data.prediction;
-  const sixXiao = pred.six_xiao || [];
-  const threeXiao = pred.three_xiao || sixXiao.slice(0, 3);
+  // --- 预测数据解析 (核心修复) ---
+  const pred = data.prediction || {}; // 如果没发布，这里是空对象
+  const isPublished = !!data.prediction; // 标记是否已发布
+
+  const sixXiao = pred.six_xiao || Array(6).fill('?');
+  const threeXiao = pred.three_xiao || Array(3).fill('?');
   
   let w1 = 'red', w2 = 'blue';
   if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
@@ -46,9 +56,14 @@ function App() {
   const bs = pred.bs || '-';
   const oe = pred.oe || '-';
 
-  const strategyStr = pred.strategy_used || '';
-  const killedMatch = strategyStr.match(/杀[:：](.+)/);
-  const killedZodiac = killedMatch ? killedMatch[1] : null;
+  // 解析杀肖
+  let killedZodiac = '-';
+  if (pred.strategy_used) {
+      const match = pred.strategy_used.match(/杀[:：](.+)/);
+      if (match) killedZodiac = match[1];
+  } else if (pred.killed) {
+      killedZodiac = pred.killed;
+  }
 
   const waveStyles = {
     red: 'bg-red-600 border-red-500 text-white',
@@ -80,50 +95,91 @@ function App() {
              <div className="text-right">
                 <div className="text-[10px] text-gray-400">绝杀</div>
                 <div className="text-xs bg-red-600 px-2 py-0.5 rounded text-white font-bold">
-                  {killedZodiac || '计算中'}
+                  {isPublished ? killedZodiac : '计算中'}
                 </div>
              </div>
           </div>
           
-          {/* 三肖 */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2"><span className="text-xs font-bold text-yellow-400">🔥 核心三肖</span></div>
-            <div className="grid grid-cols-3 gap-3">
-              {threeXiao.map((z, i) => (
-                <div key={i} className="h-10 flex items-center justify-center bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-lg text-lg font-bold text-white shadow-lg border border-yellow-500/50">{z}</div>
-              ))}
-            </div>
+          {/* 预测内容区域 (如果未发布显示遮罩) */}
+          <div className={`transition-opacity duration-500 ${isPublished ? 'opacity-100' : 'opacity-50 blur-sm'}`}>
+              
+              {/* 三肖 */}
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2"><span className="text-xs font-bold text-yellow-400">🔥 核心三肖</span></div>
+                <div className="grid grid-cols-3 gap-3">
+                  {threeXiao.map((z, i) => (
+                    <div key={i} className="h-10 flex items-center justify-center bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-lg text-lg font-bold text-white shadow-lg border border-yellow-500/50">{z}</div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 综合推荐区 */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                 {/* 左：波色 */}
+                 <div className={`rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[w1]}`}>
+                    <div className="absolute top-0 left-0 bg-white/20 text-[8px] px-1 rounded-br">主攻</div>
+                    <div className="font-bold text-lg leading-none">{waveNames[w1]}波</div>
+                    <div className="text-[10px] opacity-80 mt-1">防: {waveNames[w2]}</div>
+                 </div>
+                 {/* 右：大小单双 */}
+                 <div className="bg-slate-800/60 rounded-lg p-2 border border-slate-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-center border-b border-slate-600/50 pb-1">
+                       <span className="text-[10px] text-gray-400">推荐大小</span>
+                       <span className="font-bold text-yellow-400">{bs}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1">
+                       <span className="text-[10px] text-gray-400">推荐单双</span>
+                       <span className="font-bold text-cyan-400">{oe}</span>
+                    </div>
+                 </div>
+              </div>
+
+              {/* 六肖防守 */}
+              <div className="flex items-center gap-2 opacity-60">
+                 <span className="text-xs">防守:</span>
+                 <div className="flex gap-1">{sixXiao.slice(3).map((z, i) => <span key={i} className="text-xs font-mono bg-white/10 px-1.5 rounded">{z}</span>)}</div>
+              </div>
           </div>
 
-          {/* 综合推荐区 (波色 + 大小单双) */}
-          <div className="grid grid-cols-2 gap-3 mb-4">
-             {/* 左：波色 */}
-             <div className={`rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[w1]}`}>
-                <div className="absolute top-0 left-0 bg-white/20 text-[8px] px-1 rounded-br">主攻</div>
-                <div className="font-bold text-lg leading-none">{waveNames[w1]}波</div>
-                <div className="text-[10px] opacity-80 mt-1">防: {waveNames[w2]}</div>
-             </div>
-             {/* 右：大小单双 */}
-             <div className="bg-slate-800/60 rounded-lg p-2 border border-slate-700 flex flex-col justify-between">
-                <div className="flex justify-between items-center border-b border-slate-600/50 pb-1">
-                   <span className="text-[10px] text-gray-400">推荐大小</span>
-                   <span className="font-bold text-yellow-400">{bs}</span>
-                </div>
-                <div className="flex justify-between items-center pt-1">
-                   <span className="text-[10px] text-gray-400">推荐单双</span>
-                   <span className="font-bold text-cyan-400">{oe}</span>
-                </div>
-             </div>
-          </div>
+          {/* 未发布时的提示层 */}
+          {!isPublished && (
+              <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900/60 backdrop-blur-sm">
+                  <div className="bg-slate-800 px-4 py-2 rounded-full border border-slate-600 shadow-xl flex items-center gap-2">
+                      <span className="animate-pulse text-green-400">●</span>
+                      <span className="text-sm font-bold">AI 正在深度计算中...</span>
+                  </div>
+              </div>
+          )}
 
-          <div className="flex items-center gap-2 opacity-60">
-             <span className="text-xs">防守:</span>
-             <div className="flex gap-1">{sixXiao.slice(3).map((z, i) => <span key={i} className="text-xs font-mono bg-white/10 px-1.5 rounded">{z}</span>)}</div>
-          </div>
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
+        {predHistory.length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+              <span className="text-xs text-gray-500 font-bold uppercase">AI Accuracy</span>
+              <span className="text-[10px] text-gray-400">复盘记录</span>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {predHistory.map((item) => (
+                <div key={item.issue} className="p-3 flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                     <span className="font-mono text-gray-600 font-bold">{item.issue}期</span>
+                     <span className="text-xs text-gray-400">开: {item.result_zodiac}</span>
+                  </div>
+                  <div className="flex gap-2">
+                     <span className={`px-2 py-0.5 rounded text-xs font-bold ${item.is_hit_six == 1 ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-400'}`}>
+                       {item.is_hit_six == 1 ? '六肖中' : '错'}
+                     </span>
+                     {item.is_hit_three == 1 && <span className="px-2 py-0.5 rounded text-xs font-bold bg-yellow-50 text-yellow-600">三肖中</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
           <div className="text-center mb-4 relative">
              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
