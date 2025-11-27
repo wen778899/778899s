@@ -1,8 +1,6 @@
 // --- 基础配置 ---
-// 2025年(蛇年)生肖表: 1=蛇, 2=龙, 3=兔...
-const ZODIAC_2025 = [
-    "猪", "狗", "鸡", "猴", "羊", "马", "蛇", "龙", "兔", "虎", "牛", "鼠"
-];
+// 2025年(蛇年)生肖顺序: 1号是蛇
+const ZODIAC_SEQ = ["蛇", "龙", "兔", "虎", "牛", "鼠", "猪", "狗", "鸡", "猴", "羊", "马"];
 
 // 波色表
 const BOSE = {
@@ -11,33 +9,15 @@ const BOSE = {
     green: [5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]
 };
 
-// --- 工具函数 ---
+// --- 核心工具函数 ---
 
-// 1. 获取号码的生肖 (基于2025年逻辑)
+// 1. 获取号码的生肖
 function getShengXiao(num) {
-    // 算法：(12 - (num - 7) % 12) % 12  (针对蛇年1号为蛇的偏移量)
-    // 简单查表法：
-    // 1(蛇), 13(蛇), 25(蛇), 37(蛇), 49(蛇)
-    const seq = [1, 13, 25, 37, 49]; 
-    if (seq.includes(num)) return "蛇";
-    // 偏移计算
-    // 索引: (6 + num) % 12  -> 这里的6是调试出来的偏移量，对应ZODIAC_2025数组
-    // 让我们直接硬编码映射，保证100%准确，不玩数学游戏
-    const mapping = {
-        1:"蛇", 13:"蛇", 25:"蛇", 37:"蛇", 49:"蛇",
-        2:"龙", 14:"龙", 26:"龙", 38:"龙",
-        3:"兔", 15:"兔", 27:"兔", 39:"兔",
-        4:"虎", 16:"虎", 28:"虎", 40:"虎",
-        5:"牛", 17:"牛", 29:"牛", 41:"牛",
-        6:"鼠", 18:"鼠", 30:"鼠", 42:"鼠",
-        7:"猪", 19:"猪", 31:"猪", 43:"猪",
-        8:"狗", 20:"狗", 32:"狗", 44:"狗",
-        9:"鸡", 21:"鸡", 33:"鸡", 45:"鸡",
-        10:"猴", 22:"猴", 34:"猴", 46:"猴",
-        11:"羊", 23:"羊", 35:"羊", 47:"羊",
-        12:"马", 24:"马", 36:"马", 48:"马"
-    };
-    return mapping[num];
+    // 算法: (num - 1) 对应数组下标。 1->蛇(idx 0), 2->龙(idx 1)...
+    // 逻辑：(num - 1) % 12 获取索引
+    // 但因为 13 也是蛇，所以 (13-1)%12 = 0，正确。
+    const idx = (num - 1) % 12;
+    return ZODIAC_SEQ[idx];
 }
 
 // 2. 获取波色
@@ -47,38 +27,27 @@ function getBose(num) {
     return 'green';
 }
 
-// 3. 解析文本 (保持不变，增加容错)
+// 3. 解析文本 (保持不变)
 function parseLotteryResult(text) {
     try {
         const issueMatch = text.match(/第:?(\d+)期/);
         if (!issueMatch) return null;
         const issue = issueMatch[1];
-
         const lines = text.split('\n');
         let numbersLine = '';
-        
         for (const line of lines) {
             const trimmed = line.trim();
-            // 匹配至少7个数字
             const nums = trimmed.match(/\d{2}/g);
-            if (nums && nums.length >= 7) {
-                // 确保不是日期行 (2025-11-27)
-                if (!trimmed.includes('-')) {
-                    numbersLine = trimmed;
-                    break;
-                }
+            if (nums && nums.length >= 7 && !trimmed.includes('-')) {
+                numbersLine = trimmed;
+                break;
             }
         }
-
         if (!numbersLine) return null;
-
         const allNums = numbersLine.match(/\d{2}/g).map(Number);
         const flatNumbers = allNums.slice(0, 6);
         const specialCode = allNums[6];
-        
-        // 自动计算生肖，不再依赖文本提取，这样更准确
         const shengxiao = getShengXiao(specialCode);
-
         return { issue, flatNumbers, specialCode, shengxiao };
     } catch (e) {
         console.error("解析出错:", e);
@@ -86,51 +55,65 @@ function parseLotteryResult(text) {
     }
 }
 
-// 4. 智能预测算法 (大数据分析版)
+// 4. 🔥 核心：生成综合预测报告
 function generatePrediction(historyRows = []) {
-    // 如果没有历史数据，退化为随机
-    if (!historyRows || historyRows.length === 0) {
-        return randomNums();
-    }
+    // 初始化统计器
+    const zodiacStats = {}; // 生肖出现次数
+    const waveStats = { red: 0, blue: 0, green: 0 }; // 波色次数
+    let bigCount = 0;   // 大数次数 (>=25)
+    let oddCount = 0;   // 单数次数
 
-    // 统计过去 50 期每个号码出现的次数 (热度)
-    const frequency = {};
-    for (let i = 1; i <= 49; i++) frequency[i] = 0;
+    ZODIAC_SEQ.forEach(z => zodiacStats[z] = 0);
 
-    historyRows.forEach(row => {
-        // 合并平码和特码一起统计
-        const nums = [...(row.numbers || []), row.special_code];
-        nums.forEach(n => {
-            if (frequency[n] !== undefined) frequency[n]++;
-        });
+    // 如果没历史数据，随机填充一些假历史用于计算
+    const dataToAnalyze = historyRows.length > 0 ? historyRows : Array(10).fill(0).map(()=>({special_code: Math.floor(Math.random()*49)+1}));
+
+    // 统计历史 (主要分析特码)
+    dataToAnalyze.forEach(row => {
+        const sp = row.special_code;
+        // 统计生肖
+        const sx = getShengXiao(sp);
+        if (zodiacStats[sx] !== undefined) zodiacStats[sx]++;
+        
+        // 统计波色
+        const wave = getBose(sp);
+        if (waveStats[wave] !== undefined) waveStats[wave]++;
+
+        // 统计大小单双
+        if (sp >= 25) bigCount++;
+        if (sp % 2 !== 0) oddCount++;
     });
 
-    // 加权随机算法
-    // 出现次数越多的号码，被选中的概率稍微大一点 (追热)
-    // 但也不能只选热号，要加入一点随机扰动
-    const pool = [];
-    for (let i = 1; i <= 49; i++) {
-        // 基础权重 1，每出现一次权重 +2
-        const weight = 1 + (frequency[i] * 2); 
-        for (let k = 0; k < weight; k++) {
-            pool.push(i);
-        }
-    }
+    // --- 1. 计算六肖 & 三肖 (基于热度) ---
+    // 将生肖按出现次数从高到低排序
+    const sortedZodiacs = Object.keys(zodiacStats).sort((a, b) => zodiacStats[b] - zodiacStats[a]);
+    
+    // 逻辑：取最热的2个 + 中间的2个 + 较冷的2个 (防止全热必死)
+    // 简单起见：取前3热 + 随机3个
+    const top3 = sortedZodiacs.slice(0, 3);
+    const others = sortedZodiacs.slice(3).sort(() => 0.5 - Math.random()).slice(0, 3);
+    const recommend6 = [...top3, ...others];
 
-    const result = new Set();
-    while (result.size < 6) {
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        const num = pool[randomIndex];
-        result.add(num);
-    }
+    // --- 2. 计算波色 (主攻 & 防守) ---
+    const sortedWaves = Object.keys(waveStats).sort((a, b) => waveStats[b] - waveStats[a]);
+    const mainWave = sortedWaves[0]; // 最热的为主
+    const defendWave = sortedWaves[1]; // 次热为防
 
-    return Array.from(result).sort((a, b) => a - b);
-}
+    // --- 3. 大小单双 (反向策略：如果近期大出得多，预测小，或者追热) ---
+    // 这里采用“追热”策略
+    const total = dataToAnalyze.length;
+    const predBigSmall = (bigCount > total / 2) ? "大" : "小";
+    const predOddEven = (oddCount > total / 2) ? "单" : "双";
 
-function randomNums() {
-    const nums = new Set();
-    while(nums.size < 6) nums.add(Math.floor(Math.random() * 49) + 1);
-    return Array.from(nums).sort((a, b) => a - b);
+    // 返回结构化数据
+    return {
+        liu_xiao: recommend6,     // 推荐六肖
+        zhu_san: top3,            // 主攻三肖
+        zhu_bo: mainWave,         // 主攻波色 (red/blue/green)
+        fang_bo: defendWave,      // 防守波色
+        da_xiao: predBigSmall,    // 大小
+        dan_shuang: predOddEven   // 单双
+    };
 }
 
 module.exports = { parseLotteryResult, generatePrediction, getShengXiao, getBose };
