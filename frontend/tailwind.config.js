@@ -6,25 +6,19 @@ export default {
     ],
     theme: {
       extend: {
-        colors: {
-          // 自定义球色（基础色，具体渐变在组件中实现）
-          'lhc-red': '#f87171',
-          'lhc-blue': '#60a5fa',
-          'lhc-green': '#4ade80',
-        },
         animation: {
-          'fade-in': 'fadeIn 0.5s ease-out forwards',
-          'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+          'pop-up': 'popUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+          'shimmer': 'shimmer 2.5s linear infinite',
         },
         keyframes: {
-          fadeIn: {
-            '0%': { opacity: '0', transform: 'translateY(10px)' },
-            '100%': { opacity: '1', transform: 'translateY(0)' },
+          popUp: {
+            '0%': { opacity: '0', transform: 'scale(0.5) translateY(20px)' },
+            '100%': { opacity: '1', transform: 'scale(1) translateY(0)' },
           },
-        },
-        boxShadow: {
-          'ball': 'inset -2px -2px 6px rgba(0,0,0,0.3), inset 2px 2px 6px rgba(255,255,255,0.4), 2px 2px 4px rgba(0,0,0,0.2)',
-          'card': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+          shimmer: {
+            '0%': { transform: 'translateX(-100%) skewX(-12deg)' },
+            '100%': { transform: 'translateX(200%) skewX(-12deg)' },
+          }
         }
       },
     },
