@@ -2,288 +2,259 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Ball from './components/Ball';
 
-// --- 可视化组件 ---
-
-// 1. AI 信心仪表盘 (SVG 实现)
+// --- 迷你图表组件 ---
 const Gauge = ({ val }) => {
-  const r = 40;
-  const c = 50;
-  const circumference = Math.PI * r; // 半圆周长
-  const offset = ((100 - val) / 100) * circumference;
-  const color = val > 70 ? '#10b981' : val > 40 ? '#f59e0b' : '#ef4444'; // 绿/黄/红
-
+  const color = val > 75 ? '#34d399' : val > 40 ? '#fbbf24' : '#f87171';
   return (
-    <div className="relative w-24 h-16 flex flex-col items-center overflow-hidden">
-      {/* 底色轨道 */}
-      <svg className="w-full h-24" viewBox="0 0 100 50">
-        <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="#e5e7eb" strokeWidth="10" />
-        {/* 进度条 */}
-        <path 
-          d="M10,50 A40,40 0 0,1 90,50" 
-          fill="none" 
-          stroke={color} 
-          strokeWidth="10" 
-          strokeDasharray={circumference} 
-          strokeDashoffset={offset} 
-          strokeLinecap="round"
-        />
-      </svg>
-      <div className="absolute bottom-0 text-lg font-bold" style={{ color }}>{val}%</div>
-      <div className="text-[10px] text-gray-400 absolute top-0 right-0">信心</div>
+    <div className="flex flex-col items-center">
+      <div className="relative w-16 h-16 flex items-center justify-center">
+        <svg className="w-full h-full transform -rotate-90">
+          <circle cx="32" cy="32" r="28" stroke="#334155" strokeWidth="4" fill="none" />
+          <circle cx="32" cy="32" r="28" stroke={color} strokeWidth="4" fill="none" strokeDasharray={175} strokeDashoffset={175 - (val/100)*175} strokeLinecap="round" className="transition-all duration-1000" />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center flex-col">
+          <span className="text-sm font-bold text-white">{val}<span className="text-[10px]">%</span></span>
+        </div>
+      </div>
+      <span className="text-[10px] text-gray-400 mt-1">AI信心</span>
     </div>
   );
 };
 
-// 2. 迷你走势图 (SVG 实现 - 显示最近10期特码尾数)
-const MiniChart = ({ history }) => {
-  if (!history || history.length < 2) return null;
-  
-  // 取最近10期
-  const data = history.slice(0, 10).reverse().map(h => h.spec.num % 10);
-  
-  // 生成折线路径 points="x,y x,y..."
-  // 画布宽90 高30。x步长10，y根据数值0-9映射到30-0
-  const points = data.map((val, i) => `${i * 10},${30 - val * 3}`).join(' ');
-
+const TrendLine = ({ history }) => {
+  if (!history || history.length < 10) return null;
+  const data = history.slice(0, 15).reverse().map(h => h.spec.num % 10);
+  const points = data.map((v, i) => `${i * 6},${25 - v * 2.5}`).join(' ');
   return (
-    <div className="w-24 h-16 border-l border-b border-gray-200 p-1 flex flex-col justify-end relative">
-      <svg className="w-full h-full overflow-visible" viewBox="0 0 90 30">
-        <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={points} />
-        {/* 终点圆点 */}
-        <circle cx={(data.length-1)*10} cy={30 - data[data.length-1]*3} r="2" fill="#3b82f6" />
-      </svg>
-      <div className="text-[8px] text-gray-400 text-center mt-1">尾数走势</div>
+    <div className="flex flex-col justify-end h-16 w-24">
+        <svg className="w-full h-full overflow-visible" viewBox="0 0 90 25">
+            <polyline fill="none" stroke="#60a5fa" strokeWidth="2" points={points} />
+            <circle cx={(data.length-1)*6} cy={25 - data[data.length-1]*2.5} r="3" fill="#fff" stroke="#60a5fa" strokeWidth="2" />
+        </svg>
+        <div className="text-[8px] text-gray-500 text-center mt-1 tracking-wider">尾数走势</div>
     </div>
   );
 };
-
-// --- 主应用组件 ---
 
 function App() {
   const [data, setData] = useState(null);
-  const [predHistory, setPredHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(50);
   const [expanding, setExpanding] = useState(false);
 
   const fetchData = async (currentLimit) => {
     try {
-      const t = new Date().getTime();
+      const t = Date.now();
       const res = await fetch(`${import.meta.env.VITE_API_URL}?action=get_data&limit=${currentLimit}&_t=${t}`);
       const json = await res.json();
       if (json.status === 'success') setData(json.data);
-      
-      const resHist = await fetch(`${import.meta.env.VITE_API_URL}?action=get_history&limit=5&_t=${t}`);
-      const jsonHist = await resHist.json();
-      if (jsonHist.status === 'success') setPredHistory(jsonHist.data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-      setExpanding(false);
-    }
+    } catch (error) { console.error(error); } finally { setLoading(false); setExpanding(false); }
   };
 
   useEffect(() => { fetchData(limit); }, [limit]);
 
-  const handleLoadMore = () => {
-    setExpanding(true);
-    setLimit(limit + 50);
-  };
+  const handleLoadMore = () => { setExpanding(true); setLimit(limit + 50); };
 
-  if (loading && limit === 50) return <div className="h-screen flex items-center justify-center text-gray-400 bg-gray-50">正在连接 AI 引擎...</div>;
-  if (!data || !data.history || data.history.length === 0) return <div className="p-10 text-center text-gray-500">暂无历史数据</div>;
+  if (loading && limit === 50) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">正在连接 AI 神经元...</div>;
+  if (!data) return <div className="p-10 text-center text-gray-500">暂无数据</div>;
 
   const latestDraw = data.history[0];
   const historyList = data.history.slice(1);
-  const totalInDb = data.total_count || historyList.length;
-  const hasMore = historyList.length < (totalInDb - 1); 
+  const hasMore = historyList.length < (data.total_count - 1);
 
+  // 解析预测
   const pred = data.prediction || {};
-  const isPublished = !!data.prediction;
-
-  const sixXiao = pred.six_xiao || Array(6).fill('?');
-  const threeXiao = pred.three_xiao || Array(3).fill('?');
-  const bs = pred.bs || '-'; 
-  const oe = pred.oe || '-';
-  const confidence = pred.confidence || 0; // 信心指数
-
+  const isPub = !!data.prediction;
+  const threeXiao = pred.three_xiao || ['?', '?', '?'];
+  const sixXiao = pred.six_xiao || [];
+  
   let w1 = 'red', w2 = 'blue';
   if (pred.color_wave) { w1 = pred.color_wave.primary; w2 = pred.color_wave.secondary; }
+  
+  const bs = pred.bs || '-'; 
+  const oe = pred.oe || '-';
+  const conf = pred.confidence || 0;
 
-  let killedZodiac = '-';
-  if (pred.strategy_used) {
-      const match = pred.strategy_used.match(/杀[:：](.+)/);
-      if (match) killedZodiac = match[1];
-  } else if (pred.killed) {
-      killedZodiac = pred.killed;
-  }
+  let killed = '-';
+  if (pred.strategy_used) { const m = pred.strategy_used.match(/杀[:：](.+)/); if(m) killed = m[1]; } 
+  else if (pred.killed) killed = pred.killed;
 
-  const waveStyles = {
-    red: 'bg-red-600 border-red-500 text-white',
-    blue: 'bg-blue-600 border-blue-500 text-white',
-    green: 'bg-emerald-600 border-emerald-500 text-white'
-  };
-  const waveNames = { red: '红', blue: '蓝', green: '绿' };
-  const waveTextStyles = { red: 'text-red-500', blue: 'text-blue-500', green: 'text-emerald-500' };
+  const waveMap = { red: '红波', blue: '蓝波', green: '绿波' };
+  const waveColors = { red: 'from-red-500 to-red-700', blue: 'from-blue-500 to-blue-700', green: 'from-emerald-500 to-emerald-700' };
 
   return (
-    <div className="min-h-screen bg-gray-100 font-sans pb-10">
+    <div className="min-h-screen bg-slate-50 font-sans pb-12">
       
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-2xl mx-auto px-4 h-12 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-800 tracking-tight">六合AI分析</h1>
-          <Link to="/history" className="text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors flex items-center gap-1">
-            <span>📋 战绩记录</span>
+      {/* === 顶部导航 === */}
+      <header className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200">
+        <div className="max-w-xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-indigo-200">AI</div>
+            <h1 className="text-lg font-extrabold text-slate-800 tracking-tight">六合大脑</h1>
+          </div>
+          <Link to="/history" className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors">
+            历史战绩 &rarr;
           </Link>
         </div>
       </header>
 
-      <div className="bg-slate-900 text-white shadow-xl relative overflow-hidden">
-        <div className="max-w-2xl mx-auto px-4 py-5 relative z-10">
-          <div className="flex justify-between items-center mb-4">
-             <div>
-               <div className="text-[10px] text-indigo-300 uppercase tracking-widest">Next Prediction</div>
-               <div className="text-2xl font-bold text-white">第 {data.next_issue} 期</div>
-             </div>
-             <div className="text-right">
-                <div className="text-[10px] text-gray-400">绝杀</div>
-                <div className="text-xs bg-red-600 px-2 py-0.5 rounded text-white font-bold">
-                  {isPublished ? killedZodiac : '计算中'}
-                </div>
-             </div>
+      <div className="max-w-xl mx-auto px-3 pt-4 space-y-5">
+
+        {/* === AI 预测核心卡片 (黑金风格) === */}
+        <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-slate-300">
+          {/* 背景 */}
+          <div className="absolute inset-0 bg-slate-900">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600 rounded-full mix-blend-multiply filter blur-[80px] opacity-20 animate-pulse"></div>
+            <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-600 rounded-full mix-blend-multiply filter blur-[80px] opacity-20"></div>
           </div>
-          
-          <div className={`transition-opacity duration-500 ${isPublished ? 'opacity-100' : 'opacity-50 blur-sm'}`}>
+
+          <div className="relative p-5 text-white">
+            {/* 标题行 */}
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase border border-indigo-500/30">Next Draw</span>
+                  {!isPub && <span className="flex h-2 w-2 relative"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span></span>}
+                </div>
+                <div className="text-3xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">
+                  第 {data.next_issue} 期
+                </div>
+              </div>
+              <Gauge val={conf} />
+            </div>
+
+            {/* 内容区 (未发布时模糊) */}
+            <div className={`transition-all duration-500 ${isPub ? 'opacity-100 filter-none' : 'opacity-40 blur-sm pointer-events-none'}`}>
               
-              <div className="mb-4">
-                <div className="flex items-center gap-2 mb-2"><span className="text-xs font-bold text-yellow-400">🔥 核心三肖</span></div>
-                <div className="grid grid-cols-3 gap-3">
-                  {threeXiao.map((z, i) => (
-                    <div key={i} className="h-10 flex items-center justify-center bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-lg text-lg font-bold text-white shadow-lg border border-yellow-500/50">{z}</div>
-                  ))}
+              {/* 重点推荐行 */}
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="col-span-2 bg-white/5 rounded-xl p-3 border border-white/10 backdrop-blur-sm">
+                  <div className="text-[10px] text-gray-400 mb-2 flex items-center gap-1">🔥 核心三肖 <span className="w-full h-px bg-white/10"></span></div>
+                  <div className="flex justify-between items-center">
+                    {threeXiao.map((z,i) => (
+                      <div key={i} className="w-10 h-10 flex items-center justify-center bg-gradient-to-b from-amber-300 to-yellow-600 rounded-full shadow-lg shadow-yellow-900/50 font-bold text-lg text-white border border-yellow-200/50">
+                        {z}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className={`rounded-xl p-3 border border-white/10 flex flex-col justify-center items-center bg-gradient-to-br ${waveColors[w1]}`}>
+                  <span className="text-[10px] text-white/80 mb-1">主攻</span>
+                  <span className="text-xl font-black tracking-widest">{waveMap[w1]}</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                 <div className={`rounded-lg p-2 border flex flex-col items-center justify-center relative overflow-hidden ${waveStyles[w1]}`}>
-                    <div className="absolute top-0 left-0 bg-white/20 text-[8px] px-1 rounded-br">主攻</div>
-                    <div className="font-bold text-lg leading-none">{waveNames[w1]}波</div>
-                    <div className="text-[10px] opacity-80 mt-1">防: {waveNames[w2]}</div>
+              {/* 次要数据行 */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="bg-white/5 rounded-lg p-2 border border-white/5">
+                  <div className="text-[9px] text-gray-400">防守</div>
+                  <div className="text-sm font-bold text-gray-200">{waveMap[w2]}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/5">
+                  <div className="text-[9px] text-gray-400">大小</div>
+                  <div className="text-sm font-bold text-yellow-400">{bs}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/5">
+                  <div className="text-[9px] text-gray-400">单双</div>
+                  <div className="text-sm font-bold text-cyan-400">{oe}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/5 relative overflow-hidden">
+                  <div className="absolute inset-0 bg-red-500/10"></div>
+                  <div className="text-[9px] text-red-300">绝杀</div>
+                  <div className="text-sm font-bold text-red-400">{killed}</div>
+                </div>
+              </div>
+
+              {/* 底部：防守六肖 & 走势 */}
+              <div className="mt-4 pt-3 border-t border-white/10 flex justify-between items-end">
+                <div>
+                  <div className="text-[9px] text-gray-500 mb-1">防守六肖</div>
+                  <div className="flex gap-1.5">
+                    {sixXiao.slice(3).map((z,i) => <span key={i} className="text-xs font-mono text-slate-300 bg-white/10 px-1.5 py-0.5 rounded">{z}</span>)}
+                  </div>
+                </div>
+                <div className="opacity-50 scale-75 origin-bottom-right">
+                   <TrendLine history={data.history} />
+                </div>
+              </div>
+
+            </div>
+
+            {/* 未发布时的遮罩提示 */}
+            {!isPub && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center">
+                <div className="bg-slate-800/90 backdrop-blur-md px-6 py-3 rounded-full border border-indigo-500/30 shadow-2xl flex items-center gap-3">
+                  <span className="flex h-3 w-3 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+                  </span>
+                  <span className="text-sm font-bold text-indigo-100">AI 深度运算中...</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* === 最新开奖 (拟物风格) === */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden">
+          <div className="bg-slate-50 px-4 py-2 border-b border-slate-100 flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Latest Result</span>
+            <span className="text-[10px] text-slate-400">{latestDraw.created_at?.substring(0,16)}</span>
+          </div>
+          <div className="p-5 flex flex-col items-center">
+            <div className="flex justify-center flex-wrap gap-3 mb-5 w-full">
+              {latestDraw.normals.map((b,i) => <Ball key={i} num={b.num} color={b.color} zodiac={b.zodiac} size="lg"/>)}
+            </div>
+            
+            <div className="relative w-full flex items-center justify-center gap-4">
+               <div className="h-px bg-slate-200 flex-1"></div>
+               <span className="text-slate-300 text-xl font-thin">+</span>
+               <div className="h-px bg-slate-200 flex-1"></div>
+            </div>
+
+            <div className="mt-4">
+               <Ball num={latestDraw.spec.num} color={latestDraw.spec.color} zodiac={latestDraw.spec.zodiac} size="xl" isSpec={true}/>
+            </div>
+          </div>
+        </div>
+
+        {/* === 历史列表 (极简风) === */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-slate-700 px-2 flex items-center gap-2">
+            <span className="w-1 h-4 bg-indigo-500 rounded-full"></span> 往期走势
+          </h3>
+          {historyList.map((item) => (
+            <div key={item.id} className="bg-white rounded-xl p-3 shadow-sm border border-slate-100 flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                 <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-sm">#{item.issue}</span>
+                 <div className="flex gap-2 text-[10px] text-slate-400">
+                    <span>{item.spec.bs}</span>
+                    <span>{item.spec.oe}</span>
+                    <span>{item.spec.element}</span>
                  </div>
-                 <div className="bg-slate-800/60 rounded-lg p-2 border border-slate-700 flex flex-col justify-between">
-                    <div className="flex justify-between items-center border-b border-slate-600/50 pb-1">
-                       <span className="text-[10px] text-gray-400">推荐大小</span>
-                       <span className="font-bold text-yellow-400">{bs}</span>
-                    </div>
-                    <div className="flex justify-between items-center pt-1">
-                       <span className="text-[10px] text-gray-400">推荐单双</span>
-                       <span className="font-bold text-cyan-400">{oe}</span>
-                    </div>
-                 </div>
               </div>
-
-              <div className="flex items-center gap-2 opacity-60">
-                 <span className="text-xs">防守:</span>
-                 <div className="flex gap-1">{sixXiao.slice(3).map((z, i) => <span key={i} className="text-xs font-mono bg-white/10 px-1.5 rounded">{z}</span>)}</div>
-              </div>
-          </div>
-
-          {!isPublished && (
-              <div className="absolute inset-0 flex items-center justify-center z-20 bg-slate-900/60 backdrop-blur-sm">
-                  <div className="bg-slate-800 px-4 py-2 rounded-full border border-slate-600 shadow-xl flex items-center gap-2">
-                      <span className="animate-pulse text-green-400">●</span>
-                      <span className="text-sm font-bold">AI 正在深度计算中...</span>
-                  </div>
-              </div>
-          )}
-
-        </div>
-      </div>
-
-      <div className="max-w-2xl mx-auto space-y-4 pt-4 px-3">
-        
-        {/* === 可视化仪表盘 (新) === */}
-        {isPublished && (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3 flex justify-around items-center">
-                <Gauge val={confidence} />
-                <div className="w-px h-12 bg-gray-100"></div>
-                <MiniChart history={data.history} />
-            </div>
-        )}
-
-        {/* === 战绩概览 === */}
-        {predHistory.length > 0 && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-              <span className="text-xs text-gray-500 font-bold uppercase">AI Accuracy</span>
-              <Link to="/history" className="text-[10px] text-indigo-600 font-bold flex items-center gap-1">
-                查看全部 &gt;
-              </Link>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {predHistory.map((item) => (
-                <div key={item.issue} className="p-3 flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                     <span className="font-mono text-gray-600 font-bold">{item.issue}期</span>
-                     <span className="text-xs text-gray-400">开: {item.result_zodiac}</span>
-                  </div>
-                  <div className="flex gap-2">
-                     <span className={`px-2 py-0.5 rounded text-xs font-bold ${item.is_hit_six == 1 ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-400'}`}>
-                       {item.is_hit_six == 1 ? '六肖中' : '错'}
-                     </span>
-                     {item.is_hit_three == 1 && <span className="px-2 py-0.5 rounded text-xs font-bold bg-yellow-50 text-yellow-600">三肖中</span>}
-                  </div>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-1 overflow-x-auto no-scrollbar w-full mr-2 pb-1">
+                  {item.normals.map((b,i) => <Ball key={i} num={b.num} color={b.color} zodiac={b.zodiac} size="sm"/>)}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-          <div className="text-center mb-4 relative">
-             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
-             <span className="relative bg-white px-4 text-xs text-gray-400 font-bold">LATEST RESULT</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <div className="flex justify-center flex-wrap gap-2 mb-4 w-full">
-              {latestDraw.normals.map((ball, idx) => <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="lg" />)}
-            </div>
-            <div className="flex items-center justify-center gap-3 w-full mb-2">
-               <div className="h-px bg-gray-200 w-12"></div><span className="text-lg font-light text-gray-300">+</span><div className="h-px bg-gray-200 w-12"></div>
-            </div>
-            <Ball num={latestDraw.spec.num} color={latestDraw.spec.color} zodiac={latestDraw.spec.zodiac} size="xl" isSpec={true} />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200"><span className="text-xs text-gray-500 font-bold uppercase">History Records</span></div>
-          <div className="divide-y divide-gray-100">
-            {historyList.map((item) => (
-              <div key={item.id} className="p-3 flex flex-col gap-2 hover:bg-gray-50 transition-colors">
-                <div className="flex justify-between items-center">
-                   <div className="flex items-center gap-2">
-                      <span className="text-sm font-mono font-bold text-gray-700">No.{item.issue}</span>
-                      <div className={`w-2 h-2 rounded-full ${waveStyles[item.spec.color].split(' ')[0]}`}></div>
-                   </div>
-                   <span className="text-[10px] text-gray-400">{item.created_at?.substring(5, 16)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-1 overflow-x-auto no-scrollbar w-full mr-2 pb-1">
-                    {item.normals.map((ball, idx) => <Ball key={idx} num={ball.num} color={ball.color} zodiac={ball.zodiac} size="sm" />)}
-                  </div>
-                  <div className="w-px h-6 bg-gray-200 mx-1 flex-shrink-0"></div>
-                  <div className="flex-shrink-0"><Ball num={item.spec.num} color={item.spec.color} zodiac={item.spec.zodiac} size="md" isSpec={true} /></div>
+                <div className="w-px h-8 bg-slate-100 mx-1 flex-shrink-0"></div>
+                <div className="flex-shrink-0">
+                  <Ball num={item.spec.num} color={item.spec.color} zodiac={item.spec.zodiac} size="md" isSpec={true}/>
                 </div>
               </div>
-            ))}
-          </div>
-          {hasMore ? (
-            <button onClick={handleLoadMore} disabled={expanding} className="w-full py-3 text-sm text-indigo-600 font-bold hover:bg-gray-50 border-t border-gray-100">{expanding?'加载中...':'⬇️ 加载更多历史'}</button>
-          ) : (
-            <div className="w-full py-3 text-xs text-gray-400 text-center">已显示全部</div>
-          )}
+            </div>
+          ))}
+          
+          <button 
+            onClick={handleLoadMore} 
+            disabled={expanding || !hasMore} 
+            className="w-full py-3 text-sm font-medium text-slate-500 bg-white rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            {expanding ? '加载中...' : hasMore ? '⬇️ 查看更多历史' : '已显示全部数据'}
+          </button>
         </div>
+
       </div>
     </div>
   );
