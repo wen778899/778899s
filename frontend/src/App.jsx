@@ -63,7 +63,7 @@ const PredictionCard = ({ data, isHistory = false }) => {
   // 新数据结构
   return (
     <div className={`space-y-2 ${isHistory ? 'bg-gray-50 p-3 rounded-lg border border-gray-100 mt-2 text-xs' : ''}`}>
-      {isHistory && <div className="text-gray-400 text-[10px] mb-1">下期预测存档:</div>}
+      {isHistory && <div className="text-gray-400 text-[10px] mb-1 font-medium">下期预测存档:</div>}
 
       {/* 1. 六肖 */}
       <div className="flex items-center gap-2">
@@ -94,7 +94,7 @@ const PredictionCard = ({ data, isHistory = false }) => {
          </div>
       </div>
 
-      {/* 3. 波色与大小单双 (新增补回区域) */}
+      {/* 3. 波色与大小单双 */}
       <div className="grid grid-cols-2 gap-2">
           {/* 波色 */}
           <div className="bg-white/60 p-1.5 rounded flex items-center gap-2 border border-gray-100">
@@ -148,6 +148,7 @@ function App() {
   // 展开状态
   const [expandedRows, setExpandedRows] = useState({});
 
+  // ⚠️ 请确保这里的域名是您的后端域名
   const API_URL = 'https://9526.ip-ddns.com/api';
 
   const safeParse = (str) => {
@@ -292,10 +293,12 @@ function App() {
                       <Ball num={item.special_code} size="normal" />
                     </div>
 
+                    {/* 修改区域：展开按钮 + 文字 */}
                     <button 
                       onClick={() => toggleRow(item.id)}
-                      className="text-gray-400 hover:text-indigo-500 p-1 transition"
+                      className="flex items-center gap-1 text-gray-400 hover:text-indigo-500 p-1 transition group active:scale-95"
                     >
+                      <span className="text-[10px] scale-90 text-gray-300 group-hover:text-indigo-400 font-medium">预测记录</span>
                       {expandedRows[item.id] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </button>
                 </div>
