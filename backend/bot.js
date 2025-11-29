@@ -34,6 +34,7 @@ function getMainMenu() {
     ]).resize();
 }
 
+// 格式化文案 (适配一肖一码)
 function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     
@@ -49,19 +50,35 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const tails = pred.rec_tails ? pred.rec_tails.join('、') : (pred.hot_tail || '?');
     const safeJoin = (arr) => arr ? arr.join(' ') : '?';
     
-    // 格式化12码 (每行6个)
-    let nums12 = '?';
-    if (pred.rec_12_nums && pred.rec_12_nums.length > 0) {
-        const row1 = pred.rec_12_nums.slice(0, 6).map(n => String(n).padStart(2,'0')).join('  ');
-        const row2 = pred.rec_12_nums.slice(6).map(n => String(n).padStart(2,'0')).join('  ');
-        nums12 = `${row1}\n${row2}`;
+    // --- 格式化一肖一码阵 ---
+    // 将 12 个生肖分 4 行展示，每行 3 个
+    let zodiacGrid = '';
+    if (pred.zodiac_one_code && Array.isArray(pred.zodiac_one_code)) {
+        let lines = [];
+        let currentLine = [];
+        
+        pred.zodiac_one_code.forEach((item, index) => {
+            // 格式：鼠[17]
+            const numStr = String(item.num).padStart(2, '0');
+            currentLine.push(`${item.zodiac}[${numStr}]`);
+            
+            // 每3个换一行
+            if ((index + 1) % 3 === 0) {
+                lines.push(currentLine.join('  '));
+                currentLine = [];
+            }
+        });
+        if (currentLine.length > 0) lines.push(currentLine.join('  '));
+        zodiacGrid = lines.join('\n');
+    } else {
+        zodiacGrid = '数据计算中...';
     }
 
     return `
 ${title}
 ━━━━━━━━━━━━━━
-💎 **精选 12 码**
-${nums12}
+🦁 **全肖一码阵** (重点推荐)
+${zodiacGrid}
 
 🎯 **六肖推荐**
 ${safeJoin(pred.liu_xiao)}
@@ -172,7 +189,7 @@ function startBot() {
 
     bot.start((ctx) => {
         userStates[ctx.from.id] = null;
-        ctx.reply('🤖 智能预测系统 V6.0 (12码增强版) 已就绪', getMainMenu());
+        ctx.reply('🤖 智能预测系统 V7.0 (一肖一码版) 已就绪', getMainMenu());
     });
 
     // --- 功能: 下期预测 ---
