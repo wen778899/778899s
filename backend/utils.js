@@ -3,7 +3,7 @@
 // 标准生肖顺序 (简体)
 const ZODIAC_SEQ = ["蛇", "龙", "兔", "虎", "牛", "鼠", "猪", "狗", "鸡", "猴", "羊", "马"];
 
-// 繁体 -> 简体 映射表 (关键修复)
+// 繁体 -> 简体 映射表
 const TRAD_MAP = {
     '龍': '龙', '馬': '马', '雞': '鸡', '豬': '猪', 
     '蛇': '蛇', '兔': '兔', '虎': '虎', '牛': '牛', 
@@ -36,7 +36,7 @@ const ZODIAC_ATTRS = {
 
 // 统一转换为简体中文
 function normalizeZodiac(char) {
-    return TRAD_MAP[char] || char; // 如果在映射表里就转换，否则原样返回
+    return TRAD_MAP[char] || char; 
 }
 
 function getShengXiao(num) { 
@@ -54,11 +54,10 @@ function getWuXing(num) {
     for (const [wx, nums] of Object.entries(WU_XING_NUMS)) {
         if (nums.includes(num)) return wx;
     }
-    return '?';
+    return '金'; // 默认回退
 }
 
 function getAttrByZodiac(zx) {
-    // 确保传入的是简体
     const simpleZx = normalizeZodiac(zx);
     const res = {};
     for (const [attrKey, map] of Object.entries(ZODIAC_ATTRS)) {
@@ -75,15 +74,15 @@ function getAttrByZodiac(zx) {
 function getHead(num) { return Math.floor(num / 10); } 
 function getTail(num) { return num % 10; }
 
+// 加权随机选择 (核心算法)
 function weightedRandomSelect(items, count) {
     const result = [];
-    const _items = [...items];
+    const _items = JSON.parse(JSON.stringify(items)); // 深拷贝防止污染
+    
     for (let i = 0; i < count; i++) {
         if (_items.length === 0) break;
-        // 修复：确保权重不为 NaN，如果是 NaN 则视为 0
         const totalWeight = _items.reduce((sum, item) => sum + (isNaN(item.weight) ? 0 : item.weight), 0);
         
-        // 如果总权重有问题，强制随机选择
         if (totalWeight <= 0) {
             result.push(_items[0].item);
             _items.shift();
@@ -128,11 +127,9 @@ function parseLotteryResult(text) {
         
         let shengxiao = getShengXiao(specialCode);
         for (const line of lines) {
-            // 匹配繁体或简体生肖
             if (/[鼠牛虎兔龍龙蛇馬马羊猴雞鸡狗豬猪]/.test(line)) {
                 const animals = line.trim().split(/\s+/);
                 if (animals.length >= 7) {
-                    // 解析时直接转为简体存入数据库，一劳永逸
                     shengxiao = normalizeZodiac(animals[6]); 
                 }
             }
@@ -145,9 +142,10 @@ function parseLotteryResult(text) {
     }
 }
 
-// --- 趋势分析 ---
+// --- 趋势分析 (已修复“每期一样”的问题) ---
 function generateSinglePrediction(historyRows) {
     let data = historyRows;
+    // 如果数据不足，随机生成一些假数据用于冷启动
     if (!data || data.length < 5) {
         data = Array(20).fill(0).map(() => ({ special_code: Math.floor(Math.random() * 49) + 1 }));
     }
@@ -162,13 +160,12 @@ function generateSinglePrediction(historyRows) {
         sky_earth: {'天':0, '地':0}
     };
     
+    // 初始化字典
     for(let i=0; i<=9; i++) stats.tail[i] = 0;
-    // 初始化生肖统计
     ZODIAC_SEQ.forEach(z => stats.zodiac[z] = 0);
 
     recent20.forEach(row => {
         const n = row.special_code;
-        // 关键修复：从数据库读出来的可能是繁体，必须转简体
         const rawSx = row.shengxiao || getShengXiao(n);
         const sx = normalizeZodiac(rawSx); 
 
@@ -178,7 +175,6 @@ function generateSinglePrediction(historyRows) {
         stats.head[getHead(n)]++;
         stats.tail[getTail(n)]++;
         
-        // 安全累加：如果 sx 转换后不在列表中，给它初始化
         if (stats.zodiac[sx] === undefined) stats.zodiac[sx] = 0;
         stats.zodiac[sx]++;
 
@@ -187,39 +183,62 @@ function generateSinglePrediction(historyRows) {
         if(attrs.sky_earth) stats.sky_earth[attrs.sky_earth]++;
     });
 
+    // --- 1. 头数选择 ---
     const headWeights = Object.keys(stats.head).map(h => ({
         item: parseInt(h),
-        weight: (stats.head[h] * 10) + (Math.random() * 15)
+        weight: (stats.head[h] * 10) + (Math.random() * 20) // 增加随机因子
     }));
     const selectedHeads = weightedRandomSelect(headWeights, 2);
 
+    // --- 2. 尾数选择 ---
     const tailWeights = Object.keys(stats.tail).map(t => ({
         item: parseInt(t),
-        weight: (stats.tail[t] * 10) + (Math.random() * 15)
+        weight: (stats.tail[t] * 10) + (Math.random() * 20)
     }));
     const selectedTails = weightedRandomSelect(tailWeights, 2);
 
-    // 生肖权重计算
+    // --- 3. 生肖选择 ---
     const zodiacWeights = Object.keys(stats.zodiac).map(z => ({
         item: z,
-        // 安全处理：防止 NaN 导致 crash
-        weight: (stats.zodiac[z] || 0) * 10 + Math.random() * 20
+        weight: (stats.zodiac[z] || 0) * 10 + Math.random() * 25
     }));
     const liuXiao = weightedRandomSelect(zodiacWeights, 6);
 
-    const hotWuXing = Object.keys(stats.wuxing).sort((a,b) => stats.wuxing[b] - stats.wuxing[a])[0];
-    const hotSeason = Object.keys(stats.season).sort((a,b) => stats.season[b] - stats.season[a])[0];
-    const hotSkyEarth = Object.keys(stats.sky_earth).sort((a,b) => stats.sky_earth[b] - stats.sky_earth[a])[0];
+    // --- 4. 五行选择 (修复点：不再硬取第一名，改为加权随机) ---
+    const wuxingWeights = Object.keys(stats.wuxing).map(w => ({
+        item: w,
+        weight: (stats.wuxing[w] * 10) + Math.random() * 15 // 这里的随机值确保了不会一直死板
+    }));
+    const hotWuXing = weightedRandomSelect(wuxingWeights, 1)[0];
 
+    // --- 5. 季节选择 (修复点) ---
+    const seasonWeights = Object.keys(stats.season).map(s => ({
+        item: s,
+        weight: (stats.season[s] * 10) + Math.random() * 15
+    }));
+    const hotSeason = weightedRandomSelect(seasonWeights, 1)[0];
+
+    // --- 6. 天地肖选择 (修复点) ---
+    const skyWeights = Object.keys(stats.sky_earth).map(k => ({
+        item: k,
+        weight: (stats.sky_earth[k] * 10) + Math.random() * 15
+    }));
+    const hotSkyEarth = weightedRandomSelect(skyWeights, 1)[0];
+
+    // --- 7. 波色/大小/单双 ---
     const lastBose = data.length > 0 ? getBose(data[0].special_code) : 'red';
     const boseOpts = ['red', 'blue', 'green'].filter(b => b !== lastBose);
-    const zhuBo = Math.random() > 0.4 ? lastBose : boseOpts[0];
+    // 60% 概率杀上期波色
+    const zhuBo = Math.random() > 0.4 ? lastBose : boseOpts[Math.floor(Math.random() * boseOpts.length)];
     const fangBo = zhuBo === lastBose ? boseOpts[0] : lastBose;
 
+    // 大小单双增加随机性
     const bigCount = recent20.filter(r => r.special_code >= 25).length;
     const oddCount = recent20.filter(r => r.special_code % 2 !== 0).length;
-    const daXiao = (bigCount > 12) ? "小" : (bigCount < 8 ? "大" : (Math.random()>0.5 ? "大" : "小"));
-    const danShuang = (oddCount > 12) ? "双" : (oddCount < 8 ? "单" : (Math.random()>0.5 ? "单" : "双"));
+    
+    // 如果偏差不大，就随机；偏差大则顺势而为
+    const daXiao = (bigCount > 13) ? "小" : (bigCount < 7 ? "大" : (Math.random()>0.5 ? "大" : "小"));
+    const danShuang = (oddCount > 13) ? "双" : (oddCount < 7 ? "单" : (Math.random()>0.5 ? "单" : "双"));
 
     return {
         liu_xiao: liuXiao,
@@ -239,13 +258,14 @@ function generateSinglePrediction(historyRows) {
     };
 }
 
+// 评分逻辑保持不变
 function scorePrediction(pred, historyRows) {
     let score = 0;
     const nextResult = historyRows[0];
     if (!nextResult) return 0;
 
     const sp = nextResult.special_code;
-    const sx = normalizeZodiac(nextResult.shengxiao || getShengXiao(sp)); // 评分时也要转简体
+    const sx = normalizeZodiac(nextResult.shengxiao || getShengXiao(sp)); 
     const wx = getWuXing(sp);
     const attrs = getAttrByZodiac(sx);
 
