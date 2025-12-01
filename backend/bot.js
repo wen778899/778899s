@@ -6,7 +6,7 @@ const { parseLotteryResult, generateSinglePrediction, scorePrediction } = requir
 let AUTO_SEND_ENABLED = true;
 let DEEP_CALC_DURATION = 3 * 60 * 60 * 1000; // 默认 3 小时
 
-// 核心状态机 (来自 File 72)
+// 核心状态机
 let CALC_TASK = {
     isRunning: false,
     phase: 1, 
@@ -43,7 +43,7 @@ function getDurationMenu() {
     ]);
 }
 
-// 格式化文案 (来自 File 72)
+// 格式化文案
 function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     
@@ -56,7 +56,6 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     
     const safeJoin = (arr) => arr ? arr.join(' ') : '?';
     
-    // 格式化一肖一码阵
     let zodiacGrid = '';
     if (pred.zodiac_one_code && Array.isArray(pred.zodiac_one_code)) {
         let lines = [];
@@ -64,7 +63,7 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
         pred.zodiac_one_code.forEach((item, index) => {
             const numStr = String(item.num).padStart(2, '0');
             currentLine.push(`${item.zodiac}[${numStr}]`);
-            if ((index + 1) % 4 === 0) { // 改为每行4个更美观
+            if ((index + 1) % 4 === 0) {
                 lines.push(currentLine.join('  '));
                 currentLine = [];
             }
@@ -75,7 +74,6 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
         zodiacGrid = '数据计算中...';
     }
 
-    // 杀号信息
     const killInfo = pred.kill_zodiacs ? `\n\n🚫 **智能杀肖**: ${pred.kill_zodiacs.join(' ')}` : '';
 
     return `
@@ -110,7 +108,7 @@ function startBot() {
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
     const CHANNEL_ID = process.env.CHANNEL_ID;
 
-    // --- 后台计算任务循环 (结合 File 72 的机制) ---
+    // --- 后台计算任务循环 ---
     setInterval(async () => {
         if (!CALC_TASK.isRunning) return;
 
@@ -144,18 +142,15 @@ function startBot() {
             return;
         }
 
-        // --- 执行计算 ---
         try {
             if (!CALC_TASK.historyCache) {
                 const [rows] = await db.query('SELECT numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 50');
                 CALC_TASK.historyCache = rows;
             }
             
-            // 每次 Tick 跑 500 次模拟
             for(let i=0; i<500; i++) {
                 const tempPred = generateSinglePrediction(CALC_TASK.historyCache);
                 const score = scorePrediction(tempPred, CALC_TASK.historyCache);
-                
                 if (score > CALC_TASK.bestScore) {
                     CALC_TASK.bestScore = score;
                     CALC_TASK.bestPrediction = tempPred;
@@ -168,6 +163,8 @@ function startBot() {
     // --- 中间件 ---
     bot.use(async (ctx, next) => {
         if (ctx.channelPost) {
+            // 修正：频道消息可能没有 chat.id 属性或者格式不同，更安全的做法是直接检查 channelPost 对象
+            // 但 Telegraf 通常会把频道 ID 放在 ctx.chat.id
             if (CHANNEL_ID && String(ctx.chat.id) === String(CHANNEL_ID)) return next();
             return;
         }
@@ -175,11 +172,10 @@ function startBot() {
     });
 
     bot.start((ctx) => {
-        userStates[ctx.from.id] = null;
+        // 只有私聊才有 from
+        if (ctx.from) userStates[ctx.from.id] = null;
         ctx.reply('🤖 五行杀号算法系统 (Fusion V8.0) 已就绪', getMainMenu());
     });
-
-    // --- 功能实现 ---
 
     // 1. 设置时长
     bot.hears('⚙️ 设置时长', (ctx) => {
@@ -202,7 +198,6 @@ function startBot() {
         const nextIssue = parseInt(row.issue) + 1;
         let pred = row.deep_prediction || row.next_prediction;
         
-        // 如果数据库没存，但内存里算出来了，就用内存的
         if (!pred && CALC_TASK.bestPrediction) pred = CALC_TASK.bestPrediction;
         
         if (typeof pred === 'string') {
@@ -230,7 +225,7 @@ function startBot() {
             isRunning: true,
             phase: 2,
             startTime: Date.now(),
-            targetDuration: DEEP_CALC_DURATION, // 使用设置的时长
+            targetDuration: DEEP_CALC_DURATION,
             targetIterations: 20000000,
             currentIssue: row.issue,
             bestScore: -9999,
@@ -297,27 +292,31 @@ ${bar} ${timePct}%
 
     // 8. 删除记录
     bot.hears('🗑 删除记录', (ctx) => {
-        userStates[ctx.from.id] = 'WAIT_DEL';
-        ctx.reply('请输入要删除的期号:');
+        if (ctx.from) {
+            userStates[ctx.from.id] = 'WAIT_DEL';
+            ctx.reply('请输入要删除的期号:');
+        }
     });
 
-    // --- 消息处理 ---
+    // --- 消息处理 (已修复 Bug) ---
     bot.on(['text', 'channel_post'], async (ctx) => {
         const text = ctx.message?.text || ctx.channelPost?.text;
         if (!text) return;
 
-        // 处理删除
-        if (userStates[ctx.from.id] === 'WAIT_DEL' && ctx.chat.type === 'private') {
-            await db.execute('DELETE FROM lottery_results WHERE issue = ?', [text]);
-            userStates[ctx.from.id] = null;
-            return ctx.reply(`✅ 第 ${text} 期已删除`, getMainMenu());
+        // 1. 安全检查：用户交互 (仅私聊/群组)
+        if (ctx.from && ctx.chat?.type === 'private') {
+            if (userStates[ctx.from.id] === 'WAIT_DEL') {
+                await db.execute('DELETE FROM lottery_results WHERE issue = ?', [text]);
+                userStates[ctx.from.id] = null;
+                return ctx.reply(`✅ 第 ${text} 期已删除`, getMainMenu());
+            }
         }
 
-        // 处理开奖录入
+        // 2. 开奖录入 (任何来源)
         const result = parseLotteryResult(text);
         if (result) {
             const { issue, flatNumbers, specialCode, shengxiao } = result;
-            let initialPred = generateSinglePrediction([]); // 先生成初始数据
+            let initialPred = generateSinglePrediction([]); 
             const jsonNums = JSON.stringify(flatNumbers);
             const jsonPred = JSON.stringify(initialPred);
             
@@ -328,12 +327,11 @@ ${bar} ${timePct}%
                     ON DUPLICATE KEY UPDATE numbers=?, special_code=?, shengxiao=?, next_prediction=?, deep_prediction=NULL, open_date=NOW()
                 `, [issue, jsonNums, specialCode, shengxiao, jsonPred, jsonNums, specialCode, shengxiao, jsonPred]);
 
-                // 启动计算任务
                 CALC_TASK = {
                     isRunning: true,
                     phase: 1,
                     startTime: Date.now(),
-                    targetDuration: DEEP_CALC_DURATION, // 默认跟随时长设置
+                    targetDuration: DEEP_CALC_DURATION,
                     targetIterations: 10000000,         
                     currentIssue: issue,
                     bestScore: -9999,
@@ -343,7 +341,7 @@ ${bar} ${timePct}%
                 };
 
                 const msg = `✅ **第 ${issue} 期录入成功**\n\n🚀 自动启动计算任务\n时长: ${DEEP_CALC_DURATION/3600000} 小时\n算法: 五行生克 + 智能杀号`;
-                if (ctx.chat.type === 'private') ctx.replyWithMarkdown(msg);
+                if (ctx.chat?.type === 'private') ctx.replyWithMarkdown(msg);
                 else console.log(`频道录入: ${issue}`);
             } catch (err) { console.error(err); }
         }
