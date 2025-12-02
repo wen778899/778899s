@@ -1,3 +1,6 @@
+// 核心修复：强制 Node.js 进程使用北京时间
+process.env.TZ = 'Asia/Shanghai';
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -13,30 +16,31 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// API 1: 最新一期
+// API: 获取最新一期
 app.get('/api/latest', async (req, res) => {
     try {
         const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
         if (rows.length === 0) return res.json({ success: false, message: '暂无数据' });
         res.json({ success: true, data: rows[0] });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, error: 'Database error' });
     }
 });
 
-// API 2: 历史记录 (已移除 LIMIT限制，获取全部数据)
+// API: 获取历史记录
 app.get('/api/history', async (req, res) => {
     try {
-        // 这里去掉了 LIMIT 50，改为获取所有记录
-        // 注意：select * 可能会拿太多数据，建议按需字段获取，但为了兼容 next_prediction 我们这里拿全
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+        const [rows] = await db.query('SELECT issue, open_date, numbers, special_code, shengxiao, next_prediction, deep_prediction FROM lottery_results ORDER BY issue DESC LIMIT 50');
         res.json({ success: true, data: rows });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, error: 'Database error' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 API Server running on port ${PORT}`);
+    console.log(`🚀 API Server running on port ${PORT} (TZ: Asia/Shanghai)`);
+    // 启动 Bot
     startBot();
 });
