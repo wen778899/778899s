@@ -21,7 +21,7 @@ let CALC_TASK = {
     bestPrediction: null,
     iterations: 0,
     historyCache: null,
-    isProcessing: false // [Bug修复] 防止重复发送的并发锁
+    isProcessing: false // 防止重复发送的并发锁
 };
 
 const userStates = {};
@@ -59,7 +59,7 @@ function getDurationMenu() {
     ]);
 }
 
-// 格式化预测文案 (适配 V10.3 数据结构)
+// 格式化预测文案 (V10.5 修复版：增加头数显示)
 function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     
@@ -75,7 +75,6 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     // 一码阵格式化
     let zodiacGrid = '';
     if (pred.zodiac_one_code && Array.isArray(pred.zodiac_one_code)) {
-        // 适配 V10.3: 一行显示多个，紧凑布局
         zodiacGrid = pred.zodiac_one_code.map(i => `${i.zodiac}[${String(i.num).padStart(2,'0')}]`).join('  ');
     } else {
         zodiacGrid = '⏳ 数据计算中...';
@@ -86,8 +85,13 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
         ? `\n🚫 **绝杀三肖**: ${pred.kill_zodiacs.join(' ')}` 
         : '';
 
-    // 尾数处理 (V10.3 返回的是数组)
+    // 尾数处理
     const tailsStr = (pred.rec_tails && Array.isArray(pred.rec_tails)) ? pred.rec_tails.join('.') : '?';
+
+    // [修复] 头数处理 (之前漏了)
+    const headStr = (pred.hot_head !== undefined && pred.fang_head !== undefined)
+        ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头`
+        : '计算中...';
 
     return `
 ${title}
@@ -101,7 +105,11 @@ ${safeJoin(pred.zhu_san)}
 🦁 **一码阵 (参考)**
 ${zodiacGrid}
 
+🚫 **绝杀三肖** (避雷)
+${pred.kill_zodiacs ? pred.kill_zodiacs.join(' ') : '无'}
+
 🔢 **围捕数据**
+头数：${headStr}
 尾数：${tailsStr} 尾
 波色：${waveMap[pred.zhu_bo]} (防${waveMap[pred.fang_bo]})
 形态：${pred.da_xiao} / ${pred.dan_shuang}${killInfo}
@@ -125,20 +133,18 @@ function startBot() {
 
         const now = Date.now();
         const isTimeUp = (now - CALC_TASK.startTime) >= CALC_TASK.targetDuration;
-        // V10算法主要依赖确定性，迭代次数不需要特别多，时间到了就行
         const isIterUp = CALC_TASK.iterations >= CALC_TASK.targetIterations;
 
         // --- 阶段完成判断 ---
         if (isTimeUp || (CALC_TASK.targetIterations > 0 && isIterUp)) {
             
-            // [Bug修复] 立即上锁！防止并发执行导致重复发送
-            CALC_TASK.isProcessing = true;
+            CALC_TASK.isProcessing = true; // 上锁
 
             try {
                 const nextIssue = parseInt(CALC_TASK.currentIssue) + 1;
                 const jsonPred = JSON.stringify(CALC_TASK.bestPrediction);
 
-                // >>> Phase 1 完成：存库 -> 发频道 -> 自动切 Phase 2 <<<
+                // >>> Phase 1 完成 <<<
                 if (CALC_TASK.phase === 1) {
                     console.log(`[Phase 1 完成] 第 ${CALC_TASK.currentIssue} 期`);
                     
@@ -156,13 +162,13 @@ function startBot() {
                     CALC_TASK.phase = 2;
                     CALC_TASK.startTime = Date.now(); 
                     CALC_TASK.iterations = 0;         
-                    CALC_TASK.targetDuration = DEEP_CALC_DURATION; // Phase 2 继续跑设定的时长
+                    CALC_TASK.targetDuration = DEEP_CALC_DURATION; 
                     
                     CALC_TASK.isProcessing = false; // 解锁
                     return; 
                 } 
                 
-                // >>> Phase 2 完成：存库 -> 通知管理员 -> 结束任务 <<<
+                // >>> Phase 2 完成 <<<
                 else if (CALC_TASK.phase === 2) {
                     console.log(`[Phase 2 完成] 第 ${CALC_TASK.currentIssue} 期`);
                     CALC_TASK.isRunning = false; // 停止
@@ -208,10 +214,10 @@ function startBot() {
                 CALC_TASK.iterations++;
             }
         } catch (e) { console.error("计算出错:", e); }
-    }, 50); // 50ms 频率
+    }, 50);
 
     // ============================
-    // 2. 交互功能模块 (完整回归)
+    // 2. 交互功能模块
     // ============================
 
     // --- 功能 A: 下期预测 (带刷新) ---
@@ -223,13 +229,11 @@ function startBot() {
             const row = rows[0];
             const nextIssue = parseInt(row.issue) + 1;
             
-            // 优先取深度预测，其次基础预测，最后取内存
             let pred = safeParse(row.deep_prediction) || safeParse(row.next_prediction);
             if (!pred && CALC_TASK.bestPrediction) pred = CALC_TASK.bestPrediction;
             
             if (!pred) return ctx.reply('暂无预测数据 (或正在冷启动计算)');
 
-            // 判断是否正在计算基础版
             const isCalculating = CALC_TASK.isRunning && CALC_TASK.phase === 1 && CALC_TASK.currentIssue == row.issue;
             
             const text = formatPredictionText(nextIssue, pred, !isCalculating);
@@ -288,14 +292,14 @@ function startBot() {
                 return isRefresh ? ctx.editMessageText(text, extra).catch(()=>{}) : ctx.reply(text, extra);
             }
 
-            // 情况 2: 已经算完了 (有 deep_prediction)
+            // 情况 2: 已经算完了
             if (row.deep_prediction && !isRefresh) {
                 let deepPred = safeParse(row.deep_prediction);
                 const text = formatPredictionText(nextIssue, deepPred, '🚀 深度加强版 (已完成)');
                 return ctx.reply(text, {parse_mode:'Markdown'});
             }
 
-            // 情况 3: 手动启动深度计算 (Phase 2)
+            // 情况 3: 手动启动深度计算
             let startPred = safeParse(row.next_prediction);
             
             CALC_TASK = {
@@ -404,9 +408,8 @@ function startBot() {
     });
 
 
-    // --- 功能 F: 历史走势 (完全回归) ---
+    // --- 功能 F: 历史走势 ---
     bot.hears('📊 历史走势', async (ctx) => {
-        // 取最近15期
         const [rows] = await db.query('SELECT issue, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 15');
         let msg = '📉 **近期特码走势**\n━━━━━━━━━━━━━━\n';
         rows.forEach(r => msg += `\`${r.issue}期\` : **${String(r.special_code).padStart(2,'0')}** (${r.shengxiao})\n`);
@@ -437,7 +440,7 @@ function startBot() {
 
     bot.start((ctx) => {
         if (ctx.from) userStates[ctx.from.id] = null;
-        ctx.reply('🤖 五行杀号算法系统 (Fusion V10.3) 已就绪', getMainMenu());
+        ctx.reply('🤖 五行杀号算法系统 (Fusion V10.5) 已就绪', getMainMenu());
     });
 
     // --- 消息监听 (开奖录入) ---
