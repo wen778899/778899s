@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import { RefreshCw, Trophy, ChevronRight, Zap, ChevronLeft, Sparkles, LayoutGrid, ChevronDown, ChevronUp, Waves, Scale, Grid } from 'lucide-react';
+import { RefreshCw, Trophy, ChevronRight, Zap, ChevronLeft, Sparkles, LayoutGrid, ChevronDown, ChevronUp, Waves, Scale, Grid, Ban } from 'lucide-react';
 
 // --- 工具函数 ---
 const getBallColorClass = (n) => {
   const red = [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46];
   const blue = [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48];
-  
   if (red.includes(n)) return 'bg-red-500 ring-red-300';
   if (blue.includes(n)) return 'bg-blue-500 ring-blue-300';
   return 'bg-emerald-500 ring-emerald-300';
@@ -37,12 +36,11 @@ const Ball = ({ num, size = 'normal', isSpecial = false }) => {
   );
 };
 
-// --- 预测详情卡片组件 (一肖一码版) ---
+// --- 预测详情卡片组件 (包含杀肖展示) ---
 const PredictionCard = ({ data, isHistory = false }) => {
   if (!data) return <div className="text-xs text-gray-400 p-2">暂无预测数据</div>;
 
   const zodiacOneCode = data.zodiac_one_code || [];
-  // 以前的旧数据可能没有 zodiac_one_code，兼容一下
   const hasZodiacData = zodiacOneCode.length > 0;
 
   const waveStyles = {
@@ -55,7 +53,7 @@ const PredictionCard = ({ data, isHistory = false }) => {
     <div className={`space-y-3 ${isHistory ? 'bg-gray-50 p-3 rounded-lg border border-gray-100 mt-2 text-xs' : ''}`}>
       {isHistory && <div className="text-gray-400 text-[10px] mb-1 font-medium">下期预测存档:</div>}
 
-      {/* 1. 一肖一码阵 (核心展示区) */}
+      {/* 1. 一肖一码阵 */}
       {hasZodiacData ? (
         <div className="bg-white/80 p-2.5 rounded-lg border border-orange-200/60 shadow-sm">
            <div className="flex items-center gap-1 mb-2 text-orange-800 font-bold text-[11px] justify-center">
@@ -64,7 +62,6 @@ const PredictionCard = ({ data, isHistory = false }) => {
            
            <div className="grid grid-cols-4 gap-2">
               {zodiacOneCode.map((item, i) => {
-                 // 判断是否在主推三肖里，是的话高亮
                  const isHot = data.zhu_san && data.zhu_san.includes(item.zodiac);
                  return (
                     <div key={i} className={`
@@ -82,9 +79,8 @@ const PredictionCard = ({ data, isHistory = false }) => {
         <div className="text-center text-gray-400 text-[10px] py-2">旧数据格式，无法显示一码阵</div>
       )}
 
-      {/* 2. 辅助参数区域 (两列布局) */}
+      {/* 2. 辅助参数 (两列布局) */}
       <div className="grid grid-cols-2 gap-2">
-         {/* 左：六肖/三肖 */}
          <div className="space-y-2">
              <div className="bg-white/60 p-1.5 rounded border border-gray-200">
                 <div className="text-[10px] text-gray-400 mb-1">🔥 主攻三肖</div>
@@ -105,7 +101,6 @@ const PredictionCard = ({ data, isHistory = false }) => {
              </div>
          </div>
 
-         {/* 右：波色/头尾 */}
          <div className="space-y-2">
             <div className="bg-white/60 p-1.5 rounded border border-gray-200 flex flex-col justify-center h-[52px]">
                 <div className="flex items-center gap-1 text-[10px] mb-1">
@@ -127,6 +122,20 @@ const PredictionCard = ({ data, isHistory = false }) => {
             </div>
          </div>
       </div>
+      
+      {/* 3. [新增] 智能杀肖区域 */}
+      {data.kill_zodiacs && data.kill_zodiacs.length > 0 && (
+          <div className="bg-gray-100 p-2 rounded border border-gray-200 flex items-center justify-center gap-2">
+              <div className="flex items-center gap-1 text-[10px] text-gray-500 font-bold">
+                  <Ban size={10} className="text-gray-400" /> 五行杀肖:
+              </div>
+              <div className="flex gap-2">
+                  {data.kill_zodiacs.map((z, i) => (
+                      <span key={i} className="text-[10px] text-gray-400 line-through decoration-gray-400 decoration-2 font-medium">{z}</span>
+                  ))}
+              </div>
+          </div>
+      )}
 
     </div>
   );
@@ -158,14 +167,17 @@ function App() {
       
       if(resLatest.data.success) {
         const data = resLatest.data.data;
-        data.next_prediction = safeParse(data.next_prediction);
+        // 优先使用深度预测，没有才用普通预测
+        const deep = safeParse(data.deep_prediction);
+        const normal = safeParse(data.next_prediction);
+        data.next_prediction = deep || normal;
         setLatest(data);
       }
 
       if(resHistory.data.success) {
         const parsedHistory = resHistory.data.data.map(item => ({
           ...item,
-          next_prediction: safeParse(item.next_prediction)
+          next_prediction: safeParse(item.deep_prediction) || safeParse(item.next_prediction)
         }));
         setHistory(parsedHistory);
         setCurrentPage(1);
@@ -297,12 +309,6 @@ function App() {
                 )}
               </div>
             ))}
-            
-            {currentHistory.length < ITEMS_PER_PAGE && currentHistory.length > 0 && 
-              Array(ITEMS_PER_PAGE - currentHistory.length).fill(0).map((_, i) => (
-                <div key={`empty-${i}`} className="p-3 h-[58px]"></div>
-              ))
-            }
           </div>
 
           {/* 分页按钮 */}
