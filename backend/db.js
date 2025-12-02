@@ -15,5 +15,5 @@ const pool = mysql.createPool({
   timezone: '+08:00'
 });
 
-// 导出 Promise 包装的连接池，方便使用 async/await
+// 导出 Promise 包装的连接池
 module.exports = pool.promise();
