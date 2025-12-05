@@ -29,7 +29,7 @@ let CALC_TASK = {
     isProcessing: false 
 };
 
-// 用户状态 (用于记录删除操作)
+// 用户状态
 const userStates = {};
 
 // --- 辅助函数 ---
@@ -46,7 +46,7 @@ function getMainMenu() {
         ['🔭 深度演算', '📊 历史走势'],
         ['⚙️ 设置时长', `${autoSendIcon} 自动推送`], 
         ['📡 手动发频道', '🔄 立即抓取'],
-        ['🗑 删除记录', '🛑 停止任务'] // [恢复] 删除记录按钮
+        ['🗑 删除记录'] // 已移除停止按钮，保留删除
     ]).resize();
 }
 
@@ -58,13 +58,14 @@ function getDurationMenu() {
     ]);
 }
 
-// 格式化文案
-function formatPredictionText(issue, pred, isFinalOrTitle = false) {
+// 格式化文案 (显示迭代次数的关键逻辑)
+function formatPredictionText(issue, pred, isFinal = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     const emojiMap = { red: '🔴', blue: '🔵', green: '🟢' };
     
-    let title = typeof isFinalOrTitle === 'string' ? isFinalOrTitle : 
-        (isFinalOrTitle ? `🏁 第 ${issue} 期 最终决策` : `🧠 第 ${issue} 期 AI 演算中...`);
+    // 如果 isFinal 为 true，显示"最终决策"；否则显示"演算中"
+    // 如果任务正在跑，这里的 title 会显示 "AI 演算中..."
+    let title = isFinal ? `🏁 第 ${issue} 期 最终决策` : `🧠 第 ${issue} 期 AI 演算中...`;
     
     const safeJoin = (arr) => arr ? arr.join(' ') : '?';
 
@@ -89,6 +90,15 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const tailsStr = (pred.rec_tails && Array.isArray(pred.rec_tails)) ? pred.rec_tails.join('.') : '?';
     const headStr = (pred.hot_head !== undefined) ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头` : '?';
 
+    // 状态栏显示
+    let statusLine = "";
+    if (isFinal) {
+        statusLine = "✅ 数据库已更新 | 等待开奖验证";
+    } else {
+        // [修复] 这里读取全局变量 CALC_TASK.iterations，点击刷新时数字会变
+        statusLine = `🔄 模型迭代: ${CALC_TASK.iterations.toLocaleString()} 次\n(实时计算中...)`;
+    }
+
     return `
 ${title}
 ━━━━━━━━━━━━━━
@@ -110,7 +120,7 @@ ${safeJoin(pred.liu_xiao)} (主: ${safeJoin(pred.zhu_san)})
 波色：${waveMap[pred.zhu_bo]} (防${waveMap[pred.fang_bo]})
 形态：${pred.da_xiao} / ${pred.dan_shuang}${killInfo}
 ━━━━━━━━━━━━━━
-${typeof isFinalOrTitle === 'boolean' && isFinalOrTitle ? '✅ 数据库已更新' : `🔄 模型迭代: ${CALC_TASK.iterations}`}
+${statusLine}
 `.trim();
 }
 
@@ -134,7 +144,6 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
 
             console.log(`[Fetch] 发现新数据: ${issue} - ${openCodeStr}`);
 
-            // 解析
             const nums = openCodeStr.split(',').map(Number);
             const flatNumbers = nums.slice(0, 6);
             const specialCode = nums[6];
@@ -148,23 +157,22 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
                 VALUES (?, ?, ?, ?, NOW())
             `, [issue, jsonNums, specialCode, shengxiao]);
 
-            // 立即查询历史
+            // 查询历史
             const [historyRows] = await db.query('SELECT numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 60');
             
-            // 生成初始预测
+            // 初始预测
             const initPred = generateSinglePrediction(historyRows); 
             const jsonPred = JSON.stringify(initPred);
 
-            // 更新预测字段
             await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, issue]);
 
-            // 启动后台计算
+            // 启动任务
             CALC_TASK = {
                 isRunning: true,
                 phase: 1,
                 startTime: Date.now(),
                 targetDuration: DEEP_CALC_DURATION,
-                targetIterations: 999999,
+                targetIterations: 99999999, // 设大一点，保证跑满时间
                 currentIssue: issue,
                 bestScore: -999,
                 bestPrediction: initPred,
@@ -174,10 +182,9 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
             };
 
             if (ADMIN_ID) {
-                bot.telegram.sendMessage(ADMIN_ID, `🎉 **自动抓取成功！**\n\n第 ${issue} 期\n号码: ${openCodeStr}\n特肖: ${shengxiao}\n\n🚀 V5.5 Pro 预测任务已自动启动！`, { parse_mode: 'Markdown' });
+                bot.telegram.sendMessage(ADMIN_ID, `🎉 **自动抓取成功！**\n\n第 ${issue} 期\n号码: ${openCodeStr}\n特肖: ${shengxiao}\n\n🚀 V11.2 预测任务已启动！`, { parse_mode: 'Markdown' });
             }
             
-            // 更新日期锁
             const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
             LAST_SUCCESS_DATE = todayStr;
 
@@ -196,7 +203,9 @@ function startBot() {
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
     const CHANNEL_ID = process.env.CHANNEL_ID;
 
+    // ============================
     // 定时器 1: 计算心跳 (50ms)
+    // ============================
     setInterval(async () => {
         if (!CALC_TASK.isRunning || CALC_TASK.isProcessing) return;
         const now = Date.now();
@@ -240,6 +249,7 @@ function startBot() {
 
         try {
             if (!CALC_TASK.historyCache) return;
+            // 蒙特卡洛模拟：每次跑200次
             for(let i=0; i<200; i++) {
                 const tempPred = generateSinglePrediction(CALC_TASK.historyCache);
                 const score = scorePrediction(tempPred, CALC_TASK.historyCache);
@@ -247,12 +257,14 @@ function startBot() {
                     CALC_TASK.bestScore = score;
                     CALC_TASK.bestPrediction = tempPred;
                 }
-                CALC_TASK.iterations++;
+                CALC_TASK.iterations++; // 这里增加迭代次数
             }
-        } catch (e) { console.error("Calc Loop Error:", e); }
+        } catch (e) { console.error("Calc Error:", e); }
     }, 50);
 
+    // ============================
     // 定时器 2: 窗口抓取 (1分钟)
+    // ============================
     setInterval(() => {
         const now = new Date();
         const bjtStr = now.toLocaleString("en-US", {timeZone: "Asia/Shanghai"});
@@ -269,28 +281,52 @@ function startBot() {
     }, 60 * 1000);
 
     // --- 交互功能 ---
+    
+    // [A] 下期预测 (点击按钮)
     bot.hears('🔮 下期预测', async (ctx) => {
         const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
         if (!rows.length) return ctx.reply('暂无数据');
         const row = rows[0];
-        let pred = safeParse(row.deep_prediction) || safeParse(row.next_prediction) || CALC_TASK.bestPrediction;
+        
+        let pred = safeParse(row.deep_prediction) || safeParse(row.next_prediction);
+        if (!pred && CALC_TASK.bestPrediction) pred = CALC_TASK.bestPrediction;
+        
         if (!pred) return ctx.reply('计算中...');
-        const isCalc = CALC_TASK.isRunning && CALC_TASK.currentIssue == row.issue;
-        ctx.reply(formatPredictionText(parseInt(row.issue)+1, pred, !isCalc), { 
+        
+        // 判断当前任务是否正在跑，且跑的是下一期
+        const isRunning = CALC_TASK.isRunning && CALC_TASK.currentIssue == row.issue;
+        
+        // 如果正在跑，isFinal=false，显示迭代次数；如果没跑，isFinal=true，显示"最终决策"
+        const text = formatPredictionText(parseInt(row.issue)+1, pred, !isRunning);
+        
+        ctx.reply(text, { 
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([Markup.button.callback('🔄 刷新数据', 'refresh_pred')])
         });
     });
     
+    // [B] 刷新动作 (修复点击无反应)
     bot.action('refresh_pred', async (ctx) => {
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-        const row = rows[0];
-        let pred = safeParse(row.deep_prediction) || safeParse(row.next_prediction) || CALC_TASK.bestPrediction;
-        await ctx.editMessageText(formatPredictionText(parseInt(row.issue)+1, pred), {
-            parse_mode: 'Markdown', 
-            ...Markup.inlineKeyboard([Markup.button.callback('🔄 刷新数据', 'refresh_pred')])
-        }).catch(()=>{});
-        ctx.answerCbQuery('已刷新');
+        try {
+            const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
+            const row = rows[0];
+            
+            // 优先显示正在计算的最新结果
+            let pred = CALC_TASK.isRunning ? CALC_TASK.bestPrediction : (safeParse(row.deep_prediction) || safeParse(row.next_prediction));
+            
+            if (!pred) return ctx.answerCbQuery('暂无数据');
+
+            const isRunning = CALC_TASK.isRunning && CALC_TASK.currentIssue == row.issue;
+            const text = formatPredictionText(parseInt(row.issue)+1, pred, !isRunning);
+            
+            // 强制更新文本，忽略"message not modified"错误
+            await ctx.editMessageText(text, {
+                parse_mode: 'Markdown', 
+                ...Markup.inlineKeyboard([Markup.button.callback('🔄 刷新数据', 'refresh_pred')])
+            }).catch(() => {}); 
+            
+            ctx.answerCbQuery('已刷新');
+        } catch (e) { console.error(e); }
     });
 
     bot.hears('🔭 深度演算', async (ctx) => {
@@ -303,22 +339,27 @@ function startBot() {
             const now = Date.now();
             const timePct = Math.min(100, Math.floor(((now - CALC_TASK.startTime) / CALC_TASK.targetDuration) * 100));
             const timeLeft = Math.ceil((CALC_TASK.targetDuration - (now - CALC_TASK.startTime)) / 60000);
-            const text = `🌌 **演算中...**\n🎯 目标：${nextIssue} 期\n⚡ 阶段：Phase ${CALC_TASK.phase}\n🔄 迭代：${CALC_TASK.iterations}\n⏱️ 进度：${timePct}% (剩 ${timeLeft} 分)`;
+            const text = `🌌 **演算中...**\n🎯 目标：${nextIssue} 期\n⚡ 阶段：Phase ${CALC_TASK.phase}\n🔄 迭代：${CALC_TASK.iterations.toLocaleString()}\n⏱️ 进度：${timePct}% (剩 ${timeLeft} 分)`;
             return ctx.reply(text, {parse_mode:'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('👁️ 偷看结果', 'peek_deep'), Markup.button.callback('🔄 刷新', 'refresh_deep')]])});
         }
         if (row.deep_prediction) {
             return ctx.reply(formatPredictionText(nextIssue, safeParse(row.deep_prediction), '🚀 深度版 (已完成)'), {parse_mode:'Markdown'});
         }
-        // 手动启动
+        
         let startPred = safeParse(row.next_prediction);
-        CALC_TASK = { isRunning: true, phase: 2, startTime: Date.now(), targetDuration: DEEP_CALC_DURATION, targetIterations: 5000000, currentIssue: row.issue, bestScore: -9999, bestPrediction: startPred, iterations: 0, historyCache: null, isProcessing: false };
+        CALC_TASK = { 
+            isRunning: true, phase: 2, startTime: Date.now(), 
+            targetDuration: DEEP_CALC_DURATION, targetIterations: 99999999, 
+            currentIssue: row.issue, bestScore: -9999, bestPrediction: startPred, 
+            iterations: 0, historyCache: null, isProcessing: false 
+        };
         ctx.replyWithMarkdown(`🚀 **深度计算已手动启动**\n🎯 目标：${nextIssue} 期\n⏱️ 时长：${DEEP_CALC_DURATION/3600000} 小时`);
     });
     
     bot.action('refresh_deep', (ctx) => ctx.answerCbQuery('请重新点击菜单查看'));
     bot.action('peek_deep', async (ctx) => {
         if (!CALC_TASK.isRunning || !CALC_TASK.bestPrediction) return ctx.answerCbQuery('暂无数据');
-        await ctx.reply(formatPredictionText(parseInt(CALC_TASK.currentIssue)+1, CALC_TASK.bestPrediction, '👁️ 偷看'), {parse_mode:'Markdown'});
+        await ctx.reply(formatPredictionText(parseInt(CALC_TASK.currentIssue)+1, CALC_TASK.bestPrediction, false), {parse_mode:'Markdown'});
     });
     bot.action('show_deep_final', async (ctx) => {
         const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
@@ -330,7 +371,7 @@ function startBot() {
         if (!CALC_TASK.isRunning) return ctx.reply('💤 无任务');
         const now = Date.now();
         const pct = Math.min(100, Math.floor(((now - CALC_TASK.startTime)/CALC_TASK.targetDuration)*100));
-        ctx.reply(`📊 进度: ${pct}%`);
+        ctx.reply(`📊 进度: ${pct}%\n迭代: ${CALC_TASK.iterations}次`);
     });
 
     bot.hears('⚙️ 设置时长', (ctx) => ctx.reply('选择时长:', getDurationMenu()));
@@ -357,20 +398,11 @@ function startBot() {
         ctx.reply(msg, { parse_mode: 'Markdown' });
     });
 
+    // [恢复] 删除记录
     bot.hears('🗑 删除记录', (ctx) => {
         if (ctx.from) { userStates[ctx.from.id] = 'WAIT_DEL'; ctx.reply('请输入要删除的期号 (如 2024001):'); }
     });
     
-    bot.hears('🛑 停止任务', (ctx) => {
-        if (CALC_TASK.isRunning) {
-            CALC_TASK.isRunning = false;
-            CALC_TASK.isProcessing = false;
-            ctx.reply('✅ 计算任务已强制停止');
-        } else {
-            ctx.reply('💤 当前没有正在运行的任务');
-        }
-    });
-
     bot.hears(/自动推送/, (ctx) => {
         AUTO_SEND_ENABLED = !AUTO_SEND_ENABLED;
         ctx.reply(`自动推送: ${AUTO_SEND_ENABLED ? '✅ 开' : '❌ 关'}`, getMainMenu());
@@ -390,9 +422,10 @@ function startBot() {
     });
     bot.start((ctx) => { 
         if(ctx.from) userStates[ctx.from.id]=null; 
-        ctx.reply('🤖 V11.1 Pro (管理版) Ready', getMainMenu()); 
+        ctx.reply('🤖 V11.2 (修正版) Ready', getMainMenu()); 
     });
 
+    // 监听手动录入 & 删除
     bot.on(['text', 'channel_post'], async (ctx) => {
         const text = ctx.message?.text || ctx.channelPost?.text;
         if (!text) return;
@@ -403,7 +436,6 @@ function startBot() {
             userStates[ctx.from.id]=null; return ctx.reply(`✅ 第 ${text} 期已删除`, getMainMenu());
         }
 
-        // 手动录入
         const res = parseLotteryResult(text);
         if (res) {
             const {issue, flatNumbers, specialCode, shengxiao} = res;
@@ -414,7 +446,7 @@ function startBot() {
             await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, next_prediction, deep_prediction, open_date) VALUES (?,?,?,?,?,NULL,NOW()) ON DUPLICATE KEY UPDATE numbers=?, special_code=?, shengxiao=?, next_prediction=?, deep_prediction=NULL`, 
                 [issue, jsonNums, specialCode, shengxiao, jsonPred, jsonNums, specialCode, shengxiao, jsonPred]);
             
-            CALC_TASK = { isRunning: true, phase: 1, startTime: Date.now(), targetDuration: DEEP_CALC_DURATION, targetIterations: 99999, currentIssue: issue, bestScore: 0, bestPrediction: initPred, iterations: 0, historyCache: null, isProcessing: false };
+            CALC_TASK = { isRunning: true, phase: 1, startTime: Date.now(), targetDuration: DEEP_CALC_DURATION, targetIterations: 999999, currentIssue: issue, bestScore: 0, bestPrediction: initPred, iterations: 0, historyCache: null, isProcessing: false };
             if(ctx.chat?.type==='private') ctx.reply(`✅ 第 ${issue} 期录入(手动)。启动计算。`);
         }
     });
