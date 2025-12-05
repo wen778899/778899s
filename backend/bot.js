@@ -21,6 +21,29 @@ function safeParse(data) {
     return data;
 }
 
+// [修复] 安全解析号码数组 (兼容 JSON 和 逗号分隔字符串)
+function safeParseNumbers(numbersData) {
+    if (!numbersData) return [];
+    
+    // 如果已经是数组，直接返回
+    if (Array.isArray(numbersData)) return numbersData;
+
+    try {
+        // 尝试作为 JSON 解析
+        const parsed = JSON.parse(numbersData);
+        if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+        // 解析失败，说明可能是普通字符串 "1,2,3" 或 "1 2 3"
+    }
+
+    // 尝试按逗号或空格分割
+    if (typeof numbersData === 'string') {
+        return numbersData.split(/[, ]+/).map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+    }
+
+    return [];
+}
+
 function getMainMenu() {
     const autoSendIcon = AUTO_SEND_ENABLED ? '✅' : '❌';
     return Markup.keyboard([
@@ -56,7 +79,7 @@ function formatPredictionText(issue, pred) {
     const headStr = (pred.hot_head !== undefined) ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头` : '?';
 
     return `
-🧠 **第 ${issue} 期 深度挖掘决策 (V30.0)**
+🧠 **第 ${issue} 期 深度挖掘决策 (V30.1)**
 ━━━━━━━━━━━━━━
 🐭 **一肖一码 (全阵)**
 ${zodiacGrid}
@@ -82,7 +105,7 @@ ${pred.liu_xiao.join(' ')} (主: ${pred.zhu_san.join(' ')})
 
 // 格式化开奖结果 (播报用)
 function formatLotteryResult(issue, numbers, special, shengxiao) {
-    const nums = JSON.parse(numbers);
+    const nums = safeParseNumbers(numbers);
     const flatStr = nums.map(n => String(n).padStart(2,'0')).join(' ');
     const specStr = String(special).padStart(2,'0');
     return `
@@ -107,20 +130,18 @@ async function recalculatePrediction(bot, ADMIN_ID, latestIssue, latestResult = 
     await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, latestIssue]);
 
     if (AUTO_SEND_ENABLED && process.env.CHANNEL_ID) {
-        // 1. 先发开奖结果 (如果有)
         if (latestResult) {
             const resultMsg = formatLotteryResult(latestIssue, latestResult.numbers, latestResult.special, latestResult.shengxiao);
             await bot.telegram.sendMessage(process.env.CHANNEL_ID, resultMsg, { parse_mode: 'Markdown' });
         }
         
-        // 2. 再发下期预测
         const nextIssue = parseInt(latestIssue) + 1;
         const msg = formatPredictionText(nextIssue, prediction);
         await bot.telegram.sendMessage(process.env.CHANNEL_ID, msg, { parse_mode: 'Markdown' });
     }
     
     if (ADMIN_ID) {
-        bot.telegram.sendMessage(ADMIN_ID, `✅ V30.0 模型已更新 (样本: ${allHistory.length})`);
+        bot.telegram.sendMessage(ADMIN_ID, `✅ V30.1 模型已更新 (样本: ${allHistory.length})`);
     }
 }
 
@@ -165,7 +186,6 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
             }
 
             if (newCount > 0) {
-                // 有新数据 -> 触发重算 & 推送
                 await recalculatePrediction(bot, ADMIN_ID, latestIssue, latestData);
 
                 if (ADMIN_ID && isManual) {
@@ -243,12 +263,13 @@ function startBot() {
         } catch(e) {}
     });
 
-    // [核心修改] 历史记录显示全量号码
+    // [修复] 历史走势增加容错
     bot.hears('📊 历史走势', async (ctx) => {
-        const [rows] = await db.query('SELECT issue, numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 10');
+        const [rows] = await db.query('SELECT issue, numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 15');
         let msg = '📉 **近期开奖走势**\n━━━━━━━━━━━━━━\n';
         rows.forEach(r => {
-            const nums = JSON.parse(r.numbers);
+            // [关键] 使用 safeParseNumbers 替代 JSON.parse
+            const nums = safeParseNumbers(r.numbers);
             const numStr = nums.map(n => String(n).padStart(2,'0')).join(' ');
             msg += `\`${r.issue}\`: ${numStr} + **${String(r.special_code).padStart(2,'0')}** (${r.shengxiao})\n`;
         });
@@ -286,7 +307,7 @@ function startBot() {
     });
     bot.start((ctx) => { 
         if(ctx.from) userStates[ctx.from.id]=null; 
-        ctx.reply('🤖 V30.0 Deep Mining Ready', getMainMenu()); 
+        ctx.reply('🤖 V30.1 Deep Mining Ready', getMainMenu()); 
     });
 
     // 监听手动录入 & 删除
