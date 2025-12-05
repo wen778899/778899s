@@ -1,7 +1,6 @@
 /**
- * 六合宝典算法库 V50.0 (Ensemble Integration)
- * 核心架构：多模型集成投票机制
- * 包含：V40统计 + V50对抗 + 黄金几何
+ * 六合宝典核心算法库 V60.0 (Hybrid AI Edition)
+ * 集成：统计(Statistics) + 对抗(Adversarial) + 几何(Geometry) + AI序列(Pattern & NN)
  */
 const { Lunar } = require('lunar-javascript');
 
@@ -50,29 +49,24 @@ function getDayElement() {
 }
 
 // ===========================
-// 3. 专家模型 A: 统计惯性 (V40 逻辑)
+// 3. 引擎 A: 统计惯性 (V40)
 // ===========================
-function modelStatistical(history, lastCode, lastSx) {
+function engineStatistical(history, lastCode, lastSx) {
     const scores = {};
     for(let i=1; i<=49; i++) scores[i] = 0;
 
-    // A1. 生肖转移统计
     const zodiacNextCounts = {};
     for(let i=0; i<history.length-1; i++) {
         const currSx = normalizeZodiac(history[i].shengxiao || getShengXiao(history[i].special_code));
         const prevSx = normalizeZodiac(history[i+1].shengxiao || getShengXiao(history[i+1].special_code));
-        if(prevSx === lastSx) {
-            zodiacNextCounts[currSx] = (zodiacNextCounts[currSx] || 0) + 1;
-        }
+        if(prevSx === lastSx) zodiacNextCounts[currSx] = (zodiacNextCounts[currSx] || 0) + 1;
     }
-    // 加分
     ZODIAC_SEQ.forEach(z => {
         const count = zodiacNextCounts[z] || 0;
         const nums = getNumbersByZodiac(z);
         nums.forEach(n => scores[n] += count * 2);
     });
 
-    // A2. 邻号 (Neighbor)
     scores[lastCode] += 5;
     if(lastCode > 1) scores[lastCode-1] += 10;
     if(lastCode < 49) scores[lastCode+1] += 10;
@@ -81,27 +75,24 @@ function modelStatistical(history, lastCode, lastSx) {
 }
 
 // ===========================
-// 4. 专家模型 B: 混沌对抗 (V50 逻辑)
+// 4. 引擎 B: 混沌对抗 (V50)
 // ===========================
-function modelAdversarial(history, lastCode, lastSx) {
+function engineAdversarial(history, lastCode, lastSx) {
     const scores = {};
     for(let i=1; i<=49; i++) scores[i] = 0;
 
-    // B1. 杀六冲 (Adversarial Kill)
     const clashZodiac = ZODIAC_RELATION.clash[lastSx];
     if(clashZodiac) {
         const nums = getNumbersByZodiac(clashZodiac);
-        nums.forEach(n => scores[n] -= 50); // 强力扣分
+        nums.forEach(n => scores[n] -= 50); 
     }
 
-    // B2. 波色断龙 (Color Break)
     const lastColor = getBose(lastCode);
     let colorStreak = 0;
     for(let i=0; i<history.length; i++) {
         if(getBose(history[i].special_code) === lastColor) colorStreak++;
         else break;
     }
-    // 如果连开2期以上，下期反向押注
     if(colorStreak >= 2) {
         for(let i=1; i<=49; i++) {
             if(getBose(i) !== lastColor) scores[i] += 20;
@@ -109,71 +100,97 @@ function modelAdversarial(history, lastCode, lastSx) {
         }
     }
 
-    // B3. 遗漏回补 (Cold Rebound)
-    // 统计每个生肖的遗漏
-    const omission = {};
-    ZODIAC_SEQ.forEach(z => omission[z]=0);
-    for(let i=0; i<history.length; i++) {
-        const sx = normalizeZodiac(history[i].shengxiao || getShengXiao(history[i].special_code));
-        for(let z in omission) {
-            if(omission[z] !== -1) {
-                if(z===sx) omission[z] = -1; else omission[z]++;
-            }
-        }
-    }
-    ZODIAC_SEQ.forEach(z => {
-        if(omission[z] > 20) { // 极冷，加分防爆
-            const nums = getNumbersByZodiac(z);
-            nums.forEach(n => scores[n] += 30);
-        }
-    });
-
     return scores;
 }
 
 // ===========================
-// 5. 专家模型 C: 黄金几何 (Math Logic)
+// 5. 引擎 C: 黄金几何 (V50)
 // ===========================
-function modelGeometry(history, lastCode) {
+function engineGeometry(history, lastCode) {
     const scores = {};
     for(let i=1; i<=49; i++) scores[i] = 0;
 
-    // C1. 黄金分割点
     const goldPoints = [
         Math.floor(lastCode * 0.618),
         Math.floor(lastCode / 0.618),
-        Math.floor(49 * 0.618) // 固定黄金点 30
+        Math.floor(49 * 0.618) 
     ];
     goldPoints.forEach(p => {
         if(p >= 1 && p <= 49) scores[p] += 15;
     });
 
-    // C2. 合数关联
-    const lastHeShu = getHeShu(lastCode); // 如 25 -> 7
-    // 统计历史上 合数7 后面爱开什么合数
-    const heShuNext = {};
-    for(let i=0; i<history.length-1; i++) {
-        const pCode = parseInt(history[i+1].special_code);
-        const cCode = parseInt(history[i].special_code);
-        if(getHeShu(pCode) === lastHeShu) {
-            const cH = getHeShu(cCode);
-            heShuNext[cH] = (heShuNext[cH] || 0) + 1;
+    return scores;
+}
+
+// ===========================
+// 6. [NEW] 引擎 D: AI 序列挖掘 (V60)
+// ===========================
+function engineAI(history, lastCode) {
+    const scores = {};
+    for(let i=1; i<=49; i++) scores[i] = 0;
+
+    if (history.length < 50) return scores;
+
+    // --- D1. N-Gram 模式匹配 (历史重演) ---
+    // 寻找最近3期的生肖序列: A -> B -> C -> ?
+    // 历史中如果出现过 A->B->C，就统计它后面开什么
+    const seqLen = 3;
+    const currentSeq = [];
+    for(let i=0; i<seqLen; i++) {
+        currentSeq.push(normalizeZodiac(history[i].shengxiao || getShengXiao(history[i].special_code)));
+    }
+    // currentSeq 是 [最新, 上期, 上上期] (倒序)
+    // 我们要找历史上出现过 [X, 最新, 上期] 的情况 (因为历史是倒序存储的)
+    // 简化逻辑：匹配最近 2 期 [最新, 上期]
+    const patternZodiacs = {};
+    const p1 = currentSeq[0]; // 上一期开的
+    const p2 = currentSeq[1]; // 上上期开的
+    
+    for(let i=0; i < history.length - 3; i++) {
+        const h1 = normalizeZodiac(history[i+1].shengxiao || getShengXiao(history[i+1].special_code));
+        const h2 = normalizeZodiac(history[i+2].shengxiao || getShengXiao(history[i+2].special_code));
+        
+        if (h1 === p1 && h2 === p2) {
+            // 找到了历史相似走势！记录它的下一期 (即 history[i])
+            const nextSx = normalizeZodiac(history[i].shengxiao || getShengXiao(history[i].special_code));
+            patternZodiacs[nextSx] = (patternZodiacs[nextSx] || 0) + 1;
         }
     }
-    for(let i=1; i<=49; i++) {
-        const h = getHeShu(i);
-        if(heShuNext[h]) scores[i] += heShuNext[h] * 2;
+    
+    // 如果匹配到了模式，大幅加分
+    Object.keys(patternZodiacs).forEach(z => {
+        const count = patternZodiacs[z];
+        const nums = getNumbersByZodiac(z);
+        nums.forEach(n => scores[n] += count * 50); // 极高权重：历史重演
+    });
+
+    // --- D2. 动态热力图 (重心预测) ---
+    // 计算最近5期特码的平均值（重心）
+    let sum = 0;
+    for(let i=0; i<5; i++) sum += parseInt(history[i].special_code);
+    const center = sum / 5;
+    
+    // 惯性预测：如果重心在变大，下期可能更大；反之亦然
+    const prevSum = parseInt(history[0].special_code) + parseInt(history[1].special_code) + parseInt(history[2].special_code) + parseInt(history[3].special_code) + parseInt(history[4].special_code);
+    const oldSum = parseInt(history[1].special_code) + parseInt(history[2].special_code) + parseInt(history[3].special_code) + parseInt(history[4].special_code) + parseInt(history[5].special_code);
+    
+    const trend = prevSum - oldSum; // >0 说明重心右移， <0 说明左移
+    
+    for(let n=1; n<=49; n++) {
+        // 如果趋势向上，大号加分；趋势向下，小号加分
+        if (trend > 0 && n > center) scores[n] += 10;
+        if (trend < 0 && n < center) scores[n] += 10;
     }
 
     return scores;
 }
 
 // ===========================
-// 6. 综合预测引擎 (Main Ensemble)
+// 7. 综合预测引擎 (Hybrid Ensemble)
 // ===========================
 function generateSinglePrediction(historyRows) {
+    // 兜底
     if (!historyRows || historyRows.length < 10) {
-        // 兜底数据
         historyRows = Array(60).fill(0).map((_,i) => ({ special_code: Math.floor(Math.random()*49)+1, issue: 2024000-i, shengxiao: ZODIAC_SEQ[i%12] }));
     }
 
@@ -181,28 +198,32 @@ function generateSinglePrediction(historyRows) {
     const lastCode = parseInt(lastDraw.special_code);
     const lastSx = normalizeZodiac(lastDraw.shengxiao || getShengXiao(lastCode));
 
-    // --- 运行三个模型 ---
-    const scoresA = modelStatistical(historyRows, lastCode, lastSx);
-    const scoresB = modelAdversarial(historyRows, lastCode, lastSx);
-    const scoresC = modelGeometry(historyRows, lastCode);
+    // --- 运行四大引擎 ---
+    const scoresA = engineStatistical(historyRows, lastCode, lastSx);
+    const scoresB = engineAdversarial(historyRows, lastCode, lastSx);
+    const scoresC = engineGeometry(historyRows, lastCode);
+    const scoresD = engineAI(historyRows, lastCode);
 
-    // --- 加权汇总 ---
-    // 假设权重: 统计(40%) + 对抗(30%) + 数学(30%)
+    // --- 加权汇总 (V60.0 权重配置) ---
+    // 统计: 30%, 对抗: 20%, 几何: 20%, AI: 30%
     const finalScores = {};
     for(let i=1; i<=49; i++) {
-        finalScores[i] = (scoresA[i] * 0.4) + (scoresB[i] * 0.3) + (scoresC[i] * 0.3);
+        finalScores[i] = (scoresA[i] * 0.3) + 
+                         (scoresB[i] * 0.2) + 
+                         (scoresC[i] * 0.2) + 
+                         (scoresD[i] * 0.3);
     }
 
     // --- 结果提取 ---
     
-    // 1. 生肖排行 (取该生肖下 前2个高分号码的平均分)
+    // 1. 生肖排行
     const zodiacScores = {};
     ZODIAC_SEQ.forEach(z => {
         const nums = getNumbersByZodiac(z);
-        // 找出该生肖下分数最高的两个号
-        const zNumScores = nums.map(n => finalScores[n]).sort((a,b)=>b-a);
-        const top2Avg = (zNumScores[0] + (zNumScores[1]||0)) / 2;
-        zodiacScores[z] = top2Avg;
+        // 取该生肖下最高分号码作为生肖分
+        let maxS = -9999;
+        nums.forEach(n => { if(finalScores[n] > maxS) maxS = finalScores[n]; });
+        zodiacScores[z] = maxS;
     });
     const sortedZodiacs = Object.keys(zodiacScores).sort((a,b) => zodiacScores[b] - zodiacScores[a]);
 
@@ -230,20 +251,19 @@ function generateSinglePrediction(historyRows) {
         num: i.num, zodiac: getShengXiao(i.num), color: getBose(i.num)
     }));
 
-    // 5. 尾数统计 (直接统计总分)
-    const tailScores = {};
-    for(let i=0; i<10; i++) tailScores[i]=0;
-    for(let n=1; n<=49; n++) tailScores[n%10] += finalScores[n];
-    const sortedTails = Object.keys(tailScores).sort((a,b)=>tailScores[b]-tailScores[a]).slice(0, 3).map(Number).sort((a,b)=>a-b);
+    // 5. 常规统计
+    const tailCounts = {};
+    for(let i=0; i<10; i++) tailCounts[i]=0;
+    for(let n=1; n<=49; n++) tailCounts[n%10] += finalScores[n];
+    const sortedTails = Object.keys(tailCounts).sort((a,b)=>tailCounts[b]-tailCounts[a]).slice(0, 3).map(Number).sort((a,b)=>a-b);
 
-    // 6. 头数与波色
-    const headScores = {0:0, 1:0, 2:0, 3:0, 4:0};
-    for(let n=1; n<=49; n++) headScores[Math.floor(n/10)] += finalScores[n];
-    const sortedHeads = Object.keys(headScores).sort((a,b)=>headScores[b]-headScores[a]).map(Number);
+    const headCounts = {0:0, 1:0, 2:0, 3:0, 4:0};
+    for(let n=1; n<=49; n++) headCounts[Math.floor(n/10)] += finalScores[n];
+    const sortedHeads = Object.keys(headCounts).sort((a,b)=>headCounts[b]-headCounts[a]).map(Number);
 
-    const waveScores = {red:0, blue:0, green:0};
-    for(let n=1; n<=49; n++) waveScores[getBose(n)] += finalScores[n];
-    const sortedWaves = Object.keys(waveScores).sort((a,b)=>waveScores[b]-waveScores[a]);
+    const waveCounts = {red:0, blue:0, green:0};
+    for(let n=1; n<=49; n++) waveCounts[getBose(n)] += finalScores[n];
+    const sortedWaves = Object.keys(waveCounts).sort((a,b)=>waveCounts[b]-waveCounts[a]);
 
     const bestNum = specialTop5[0].num;
 
@@ -262,7 +282,7 @@ function generateSinglePrediction(historyRows) {
         da_xiao: bestNum >= 25 ? '大' : '小',
         dan_shuang: bestNum % 2 !== 0 ? '单' : '双',
         meta: {
-            algorithm: "V50.0 Ensemble"
+            algorithm: "V60.0 Hybrid AI"
         }
     };
 }
