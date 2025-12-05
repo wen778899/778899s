@@ -29,6 +29,7 @@ let CALC_TASK = {
     isProcessing: false 
 };
 
+// 用户状态 (用于记录删除操作)
 const userStates = {};
 
 // --- 辅助函数 ---
@@ -44,7 +45,8 @@ function getMainMenu() {
         ['🔮 下期预测', '⏳ 计算进度'],
         ['🔭 深度演算', '📊 历史走势'],
         ['⚙️ 设置时长', `${autoSendIcon} 自动推送`], 
-        ['📡 手动发频道', '🔄 立即抓取']
+        ['📡 手动发频道', '🔄 立即抓取'],
+        ['🗑 删除记录', '🛑 停止任务'] // [恢复] 删除记录按钮
     ]).resize();
 }
 
@@ -56,7 +58,7 @@ function getDurationMenu() {
     ]);
 }
 
-// [核心修改] 格式化文案 - 适配 V5.5 Pro 新数据结构
+// 格式化文案
 function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     const emojiMap = { red: '🔴', blue: '🔵', green: '🟢' };
@@ -66,52 +68,32 @@ function formatPredictionText(issue, pred, isFinalOrTitle = false) {
     
     const safeJoin = (arr) => arr ? arr.join(' ') : '?';
 
-    // 1. 一肖一码 (网格化显示)
-    let zodiacOneStr = '⏳ 计算中...';
+    let zodiacGrid = '⏳ 计算中...';
     if (pred.zodiac_one_code && Array.isArray(pred.zodiac_one_code)) {
-        // 每行4个，分3行显示
         let lines = [];
         for(let i=0; i<pred.zodiac_one_code.length; i+=4) {
             lines.push(pred.zodiac_one_code.slice(i, i+4).map(item => 
                 `${item.zodiac}${String(item.num).padStart(2,'0')}${emojiMap[item.color]||''}`
             ).join('  '));
         }
-        zodiacOneStr = lines.join('\n');
+        zodiacGrid = lines.join('\n');
     }
 
-    // 2. 精选平码 (平铺)
     let normalStr = '⏳';
-    if (pred.normal_numbers && Array.isArray(pred.normal_numbers)) {
-        normalStr = pred.normal_numbers.map(n => 
-            `${String(n.num).padStart(2,'0')}(${n.zodiac})`
-        ).join('  ');
-    }
+    if (pred.normal_numbers) normalStr = pred.normal_numbers.map(n => `${String(n.num).padStart(2,'0')}(${n.zodiac})`).join('  ');
 
-    // 3. 特码前五 (平铺)
     let specialStr = '⏳';
-    if (pred.special_numbers && Array.isArray(pred.special_numbers)) {
-        specialStr = pred.special_numbers.map(n => 
-            `${String(n.num).padStart(2,'0')}${emojiMap[n.color]||''}`
-        ).join('  ');
-    }
+    if (pred.special_numbers) specialStr = pred.special_numbers.map(n => `${String(n.num).padStart(2,'0')}${emojiMap[n.color]||''}`).join('  ');
 
-    // 4. 绝杀
-    const killInfo = (pred.kill_zodiacs && pred.kill_zodiacs.length > 0) 
-        ? `\n🚫 **绝杀三肖**: ${pred.kill_zodiacs.join(' ')}` : '';
-
-    // 5. 尾数 (数组)
+    const killInfo = (pred.kill_zodiacs && pred.kill_zodiacs.length > 0) ? `\n🚫 **绝杀三肖**: ${pred.kill_zodiacs.join(' ')}` : '';
     const tailsStr = (pred.rec_tails && Array.isArray(pred.rec_tails)) ? pred.rec_tails.join('.') : '?';
-
-    // 6. 头数 (主/防)
-    const headStr = (pred.hot_head !== undefined && pred.fang_head !== undefined)
-        ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头`
-        : '计算中...';
+    const headStr = (pred.hot_head !== undefined) ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头` : '?';
 
     return `
 ${title}
 ━━━━━━━━━━━━━━
 🐭 **一肖一码 (全阵)**
-${zodiacOneStr}
+${zodiacGrid}
 
 💎 **精选平码 (六码)**
 ${normalStr}
@@ -128,7 +110,7 @@ ${safeJoin(pred.liu_xiao)} (主: ${safeJoin(pred.zhu_san)})
 波色：${waveMap[pred.zhu_bo]} (防${waveMap[pred.fang_bo]})
 形态：${pred.da_xiao} / ${pred.dan_shuang}${killInfo}
 ━━━━━━━━━━━━━━
-${typeof isFinalOrTitle === 'boolean' && isFinalOrTitle ? '✅ 数据库已更新 | 等待开奖验证' : `🔄 模型迭代: ${CALC_TASK.iterations}`}
+${typeof isFinalOrTitle === 'boolean' && isFinalOrTitle ? '✅ 数据库已更新' : `🔄 模型迭代: ${CALC_TASK.iterations}`}
 `.trim();
 }
 
@@ -166,16 +148,17 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
                 VALUES (?, ?, ?, ?, NOW())
             `, [issue, jsonNums, specialCode, shengxiao]);
 
-            // 查询历史
+            // 立即查询历史
             const [historyRows] = await db.query('SELECT numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 60');
             
-            // 生成 V5.5 Pro 预测
+            // 生成初始预测
             const initPred = generateSinglePrediction(historyRows); 
             const jsonPred = JSON.stringify(initPred);
 
+            // 更新预测字段
             await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, issue]);
 
-            // 启动深度计算
+            // 启动后台计算
             CALC_TASK = {
                 isRunning: true,
                 phase: 1,
@@ -194,6 +177,7 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
                 bot.telegram.sendMessage(ADMIN_ID, `🎉 **自动抓取成功！**\n\n第 ${issue} 期\n号码: ${openCodeStr}\n特肖: ${shengxiao}\n\n🚀 V5.5 Pro 预测任务已自动启动！`, { parse_mode: 'Markdown' });
             }
             
+            // 更新日期锁
             const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
             LAST_SUCCESS_DATE = todayStr;
 
@@ -212,7 +196,7 @@ function startBot() {
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
     const CHANNEL_ID = process.env.CHANNEL_ID;
 
-    // 定时器 1: 预测计算 (Heartbeat - 50ms)
+    // 定时器 1: 计算心跳 (50ms)
     setInterval(async () => {
         if (!CALC_TASK.isRunning || CALC_TASK.isProcessing) return;
         const now = Date.now();
@@ -250,7 +234,7 @@ function startBot() {
                     CALC_TASK.isProcessing = false;
                     return;
                 }
-            } catch (e) { console.error('Calc Task Error:', e); CALC_TASK.isProcessing = false; }
+            } catch (e) { console.error('Calc Error:', e); CALC_TASK.isProcessing = false; }
             return;
         }
 
@@ -265,10 +249,10 @@ function startBot() {
                 }
                 CALC_TASK.iterations++;
             }
-        } catch (e) { console.error("Calc Error:", e); }
+        } catch (e) { console.error("Calc Loop Error:", e); }
     }, 50);
 
-    // 定时器 2: 时间窗口抓取调度器 (每 1 分钟检查一次)
+    // 定时器 2: 窗口抓取 (1分钟)
     setInterval(() => {
         const now = new Date();
         const bjtStr = now.toLocaleString("en-US", {timeZone: "Asia/Shanghai"});
@@ -284,7 +268,7 @@ function startBot() {
         }
     }, 60 * 1000);
 
-    // --- 交互 ---
+    // --- 交互功能 ---
     bot.hears('🔮 下期预测', async (ctx) => {
         const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
         if (!rows.length) return ctx.reply('暂无数据');
@@ -374,9 +358,19 @@ function startBot() {
     });
 
     bot.hears('🗑 删除记录', (ctx) => {
-        if (ctx.from) { userStates[ctx.from.id] = 'WAIT_DEL'; ctx.reply('输入期号:'); }
+        if (ctx.from) { userStates[ctx.from.id] = 'WAIT_DEL'; ctx.reply('请输入要删除的期号 (如 2024001):'); }
     });
     
+    bot.hears('🛑 停止任务', (ctx) => {
+        if (CALC_TASK.isRunning) {
+            CALC_TASK.isRunning = false;
+            CALC_TASK.isProcessing = false;
+            ctx.reply('✅ 计算任务已强制停止');
+        } else {
+            ctx.reply('💤 当前没有正在运行的任务');
+        }
+    });
+
     bot.hears(/自动推送/, (ctx) => {
         AUTO_SEND_ENABLED = !AUTO_SEND_ENABLED;
         ctx.reply(`自动推送: ${AUTO_SEND_ENABLED ? '✅ 开' : '❌ 关'}`, getMainMenu());
@@ -396,19 +390,20 @@ function startBot() {
     });
     bot.start((ctx) => { 
         if(ctx.from) userStates[ctx.from.id]=null; 
-        ctx.reply('🤖 V5.5 Pro + 21:33窗口抓取版 Ready', getMainMenu()); 
+        ctx.reply('🤖 V11.1 Pro (管理版) Ready', getMainMenu()); 
     });
 
-    // 监听手动录入
     bot.on(['text', 'channel_post'], async (ctx) => {
         const text = ctx.message?.text || ctx.channelPost?.text;
         if (!text) return;
         
+        // 删除逻辑
         if (ctx.from && userStates[ctx.from.id]==='WAIT_DEL' && ctx.chat.type==='private') {
             await db.execute('DELETE FROM lottery_results WHERE issue=?', [text]);
-            userStates[ctx.from.id]=null; return ctx.reply('已删除');
+            userStates[ctx.from.id]=null; return ctx.reply(`✅ 第 ${text} 期已删除`, getMainMenu());
         }
 
+        // 手动录入
         const res = parseLotteryResult(text);
         if (res) {
             const {issue, flatNumbers, specialCode, shengxiao} = res;
