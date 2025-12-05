@@ -1,30 +1,14 @@
 /**
- * 六合宝典核心算法库 V30.1 (修复版)
- * 修复: ReferenceError: ZODIAC_MAP is not defined
- * 包含: 7大统计维度 + 深度挖掘
+ * 六合宝典核心算法库 V40.0 (纯数学统计挖掘版)
+ * 移除所有五行/玄学/随机成分
+ * 核心：遗漏偏离 + 邻孤传 + 隔期挖掘 + 平特关联 + 形态统计
  */
-const { Lunar } = require('lunar-javascript');
 
 // ==========================================
-// 1. 基础配置
+// 1. 基础常量
 // ==========================================
-const ZODIAC_SEQ = ["蛇", "龙", "兔", "虎", "牛", "鼠", "猪", "狗", "鸡", "猴", "羊", "马"]; // 2025年顺序
-
-// [补全] 生肖号码映射表
-const ZODIAC_MAP = {
-    "鼠": [6, 18, 30, 42],
-    "牛": [5, 17, 29, 41],
-    "虎": [4, 16, 28, 40],
-    "兔": [3, 15, 27, 39],
-    "龙": [2, 14, 26, 38],
-    "蛇": [1, 13, 25, 37, 49],
-    "马": [12, 24, 36, 48],
-    "羊": [11, 23, 35, 47],
-    "猴": [10, 22, 34, 46],
-    "鸡": [9, 21, 33, 45],
-    "狗": [8, 20, 32, 44],
-    "猪": [7, 19, 31, 43]
-};
+const ZODIAC_SEQ = ["蛇", "龙", "兔", "虎", "牛", "鼠", "猪", "狗", "鸡", "猴", "羊", "马"]; 
+const TRAD_MAP = { '龍': '龙', '馬': '马', '雞': '鸡', '豬': '猪', '蛇': '蛇', '兔': '兔', '虎': '虎', '牛': '牛', '鼠': '鼠', '狗': '狗', '猴': '猴', '羊': '羊' };
 
 const BOSE = {
     red: [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46],
@@ -32,224 +16,201 @@ const BOSE = {
     green: [5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]
 };
 
-const WUXING_NUMS = {
-    gold: [1,2,9,10,23,24,31,32,39,40],
-    wood: [5,6,13,14,21,22,35,36,43,44],
-    water: [11,12,19,20,33,34,41,42,49],
-    fire: [3,4,17,18,25,26,37,38,45,46],
-    earth: [7,8,15,16,29,30,47,48]
-};
-
-const ZODIAC_RELATION = {
-    harmony: { "鼠":"牛", "牛":"鼠", "虎":"猪", "猪":"虎", "兔":"狗", "狗":"兔", "龙":"鸡", "鸡":"龙", "蛇":"猴", "猴":"蛇", "马":"羊", "羊":"马" },
-    clash: { "鼠":"马", "马":"鼠", "牛":"羊", "羊":"牛", "虎":"猴", "猴":"虎", "兔":"鸡", "鸡":"兔", "龙":"狗", "狗":"龙", "蛇":"猪", "猪":"蛇" }
-};
-
-// 基础权重
-let CURRENT_WEIGHTS = {
-    zodiac_trend: 1.0,   
-    tail_trend: 0.8,     
-    color_jump: 0.6,     
-    composite: 0.5,      
-    road_012: 0.5,       
-    omission: 0.4,       
-    companion: 0.7       
-};
-
 // ==========================================
-// 2. 辅助工具
+// 2. 辅助函数
 // ==========================================
 function getShengXiao(num) { return ZODIAC_SEQ[(num - 1) % 12]; }
-function normalizeZodiac(char) { 
-    const map = { '龍': '龙', '馬': '马', '雞': '鸡', '豬': '猪', '蛇': '蛇', '兔': '兔', '虎': '虎', '牛': '牛', '鼠': '鼠', '狗': '狗', '猴': '猴', '羊': '羊' };
-    return map[char] || char; 
-}
+function normalizeZodiac(char) { return TRAD_MAP[char] || char; }
 function getBose(num) { if (BOSE.red.includes(num)) return 'red'; if (BOSE.blue.includes(num)) return 'blue'; return 'green'; }
-function getWuXing(num) { for (const [e, nums] of Object.entries(WUXING_NUMS)) { if (nums.includes(num)) return e; } return 'gold'; }
-function getNumbersByZodiac(z) { return ZODIAC_MAP[z] || []; }
-
-function getDayElement() {
-    const now = new Date();
-    const beijingTimeStr = now.toLocaleString("en-US", {timeZone: "Asia/Shanghai"});
-    const beijingDate = new Date(beijingTimeStr);
-    beijingDate.setDate(beijingDate.getDate() + 1); 
-    const lunar = Lunar.fromDate(beijingDate);
-    const dayGan = lunar.getDayGan(); 
-    const wuxingMap = { "甲":"wood", "乙":"wood", "丙":"fire", "丁":"fire", "戊":"earth", "己":"earth", "庚":"gold", "辛":"gold", "壬":"water", "癸":"water" };
-    return wuxingMap[dayGan] || 'gold';
-}
-
-function getAttributes(num) {
-    return { zodiac: getShengXiao(num), color: getBose(num) };
-}
-
-function getHeShu(num) {
-    const tens = Math.floor(num / 10);
-    const units = num % 10;
-    return tens + units;
-}
-
-function get012Road(num) {
-    return num % 3;
-}
+function getNumbersByZodiac(z) { const nums = []; for(let i=1; i<=49; i++) if(getShengXiao(i)===z) nums.push(i); return nums; }
 
 // ==========================================
-// 3. 多维统计挖掘引擎 (Mining Engine)
+// 3. 深度规律挖掘引擎 (Mining Engine)
 // ==========================================
-function minePatterns(history) {
+function mineDeepPatterns(history) {
     const stats = {
-        zodiac_next: {}, 
-        tail_next: {},   
-        color_next: {},  
-        composite_next: {}, 
-        road_next: {},   
-        companion: {},   
-        omission: {},    
-        shapeStats: { bigOdd: 0, bigEven: 0, smallOdd: 0, smallEven: 0 },
-        totalRecords: history.length
+        skip3_zodiac: {}, // 隔三期生肖规律
+        flat_tail_next_special: {}, // 平码尾数 -> 特码尾数
+        zodiac_next: {}, // 上期生肖 -> 下期生肖 (真实概率)
+        shape_trend: { big:0, small:0, odd:0, even:0 }, // 大小单双趋势
+        total: history.length
     };
 
     // 初始化
-    ZODIAC_SEQ.forEach(z => { stats.zodiac_next[z] = {}; stats.omission[z] = 0; });
-    for(let i=0; i<10; i++) stats.tail_next[i] = {};
-    ['red','blue','green'].forEach(c => stats.color_next[c] = {});
-    ['odd','even'].forEach(t => stats.composite_next[t] = {odd:0, even:0});
-    [0,1,2].forEach(r => stats.road_next[r] = {0:0, 1:0, 2:0});
-    for(let i=1; i<=49; i++) stats.companion[i] = {};
-
-    // 遍历历史 (倒序)
-    for (let i = history.length - 2; i >= 0; i--) {
-        const prev = history[i+1];
-        const curr = history[i];
-        
-        const pSpec = parseInt(prev.special_code);
-        const cSpec = parseInt(curr.special_code);
-        const pSx = normalizeZodiac(prev.shengxiao || getShengXiao(pSpec));
-        const cSx = normalizeZodiac(curr.shengxiao || getShengXiao(cSpec));
-        
-        // 统计各项转移
-        stats.zodiac_next[pSx][cSx] = (stats.zodiac_next[pSx][cSx] || 0) + 1;
-        stats.tail_next[pSpec%10][cSpec%10] = (stats.tail_next[pSpec%10][cSpec%10] || 0) + 1;
-        stats.color_next[getBose(pSpec)][getBose(cSpec)] = (stats.color_next[getBose(pSpec)][getBose(cSpec)] || 0) + 1;
-        
-        const pHs = getHeShu(pSpec) % 2 === 0 ? 'even' : 'odd';
-        const cHs = getHeShu(cSpec) % 2 === 0 ? 'even' : 'odd';
-        stats.composite_next[pHs][cHs]++;
-        
-        stats.road_next[get012Road(pSpec)][get012Road(cSpec)]++;
-        
-        // 伴生
-        if (curr.numbers) {
-            try {
-                const nums = typeof curr.numbers === 'string' ? JSON.parse(curr.numbers) : curr.numbers;
-                nums.forEach(n => {
-                    stats.companion[pSpec][n] = (stats.companion[pSpec][n] || 0) + 1;
-                });
-            } catch(e) {}
-        }
-    }
-
-    // 遗漏值
-    const currentOmission = {};
-    // [修复] 这里使用了 ZODIAC_MAP
-    Object.keys(ZODIAC_MAP).forEach(z => currentOmission[z] = 0);
-    
-    for(let i=0; i<history.length; i++) {
-        const sx = normalizeZodiac(history[i].shengxiao || getShengXiao(history[i].special_code));
-        Object.keys(currentOmission).forEach(k => {
-            if (currentOmission[k] !== -1) {
-                if (k === sx) currentOmission[k] = -1;
-                else currentOmission[k]++;
-            }
-        });
-    }
-    Object.keys(currentOmission).forEach(k => {
-        if(currentOmission[k] === -1) currentOmission[k] = 0;
-        stats.omission[k] = currentOmission[k];
+    ZODIAC_SEQ.forEach(z => {
+        stats.skip3_zodiac[z] = {}; 
+        stats.zodiac_next[z] = {};
     });
+    for(let t=0; t<10; t++) stats.flat_tail_next_special[t] = {};
+
+    // 遍历挖掘 (倒序: 旧->新)
+    for (let i = history.length - 1; i >= 0; i--) {
+        const curr = history[i];
+        const cSpec = parseInt(curr.special_code);
+        const cSx = normalizeZodiac(curr.shengxiao || getShengXiao(cSpec));
+        const cTail = cSpec % 10;
+
+        // 1. 隔三期规律 (i+3 -> i)
+        if (i + 3 < history.length) {
+            const prev3 = history[i+3];
+            const p3Sx = normalizeZodiac(prev3.shengxiao || getShengXiao(prev3.special_code));
+            if (!stats.skip3_zodiac[p3Sx][cSx]) stats.skip3_zodiac[p3Sx][cSx] = 0;
+            stats.skip3_zodiac[p3Sx][cSx]++;
+        }
+
+        // 2. 生肖直接转移 (i+1 -> i)
+        if (i + 1 < history.length) {
+            const prev = history[i+1];
+            const pSx = normalizeZodiac(prev.shengxiao || getShengXiao(prev.special_code));
+            if (!stats.zodiac_next[pSx][cSx]) stats.zodiac_next[pSx][cSx] = 0;
+            stats.zodiac_next[pSx][cSx]++;
+        }
+
+        // 3. 平码尾数 -> 特码尾数 (i+1 的平码 -> i 的特码)
+        if (i + 1 < history.length) {
+            const prev = history[i+1];
+            if (prev.numbers) {
+                try {
+                    const pNums = typeof prev.numbers === 'string' ? JSON.parse(prev.numbers) : prev.numbers;
+                    // 统计上期每个平码的尾数
+                    const pTails = [...new Set(pNums.map(n => parseInt(n) % 10))]; // 去重
+                    pTails.forEach(pt => {
+                        if (!stats.flat_tail_next_special[pt][cTail]) stats.flat_tail_next_special[pt][cTail] = 0;
+                        stats.flat_tail_next_special[pt][cTail]++;
+                    });
+                } catch(e) {}
+            }
+        }
+
+        // 4. 形态统计
+        if (cSpec >= 25) stats.shape_trend.big++; else stats.shape_trend.small++;
+        if (cSpec % 2 !== 0) stats.shape_trend.odd++; else stats.shape_trend.even++;
+    }
 
     return stats;
 }
 
 // ==========================================
-// 4. 深度挖掘 (Deep Mining)
-// ==========================================
-function deepMining(history) {
-    const last30 = history.slice(0, 30);
-    let colorHit = 0;
-    let tailHit = 0;
-    
-    for(let i=0; i<last30.length-1; i++) {
-        const prev = last30[i+1];
-        const curr = last30[i];
-        if (getBose(prev.special_code) === getBose(curr.special_code)) colorHit++;
-        if (prev.special_code % 10 === curr.special_code % 10) tailHit++;
-    }
-    
-    CURRENT_WEIGHTS.color_jump = 0.5 + (colorHit / 30);
-    CURRENT_WEIGHTS.tail_trend = 0.5 + (tailHit / 30);
-    
-    return CURRENT_WEIGHTS;
-}
-
-// ==========================================
-// 5. 预测生成主入口
+// 4. 预测生成主入口 (Generate)
 // ==========================================
 function generateSinglePrediction(historyRows) {
     if (!historyRows || historyRows.length < 10) {
-        historyRows = Array(65).fill(0).map((_,i) => ({ special_code: Math.floor(Math.random()*49)+1, issue: 2024000-i, shengxiao: ZODIAC_SEQ[i%12] }));
+        historyRows = Array(60).fill(0).map((_,i) => ({ 
+            special_code: Math.floor(Math.random()*49)+1, 
+            issue: 2024000-i,
+            shengxiao: ZODIAC_SEQ[i%12],
+            numbers: [1,2,3,4,5,6]
+        }));
     }
-    
-    const lastDraw = historyRows[0];
+
+    const lastDraw = historyRows[0]; // 最新一期
     const lastCode = parseInt(lastDraw.special_code);
     const lastSx = normalizeZodiac(lastDraw.shengxiao || getShengXiao(lastCode));
-    const lastTail = lastCode % 10;
-    const lastColor = getBose(lastCode);
-    const lastHeShu = getHeShu(lastCode) % 2 === 0 ? 'even' : 'odd';
-    const lastRoad = get012Road(lastCode);
+    
+    // 获取上期平码尾数
+    let lastFlatTails = [];
+    if (lastDraw.numbers) {
+        try {
+            const nums = typeof lastDraw.numbers === 'string' ? JSON.parse(lastDraw.numbers) : lastDraw.numbers;
+            lastFlatTails = [...new Set(nums.map(n => parseInt(n) % 10))];
+        } catch(e) {}
+    }
 
-    const weights = deepMining(historyRows);
-    const stats = minePatterns(historyRows);
+    // 获取隔三期那一期的生肖 (即 history[2])
+    let prev3Sx = null;
+    if (historyRows.length >= 3) {
+        const prev3 = historyRows[2]; // index 0是最新, 1是上期, 2是上上期... 
+        // 修正：隔三期通常指 -3 期。
+        // [0:2024004] [1:2024003] [2:2024002] [3:2024001]
+        // 如果要找 001 -> 004 的规律，应该取 index 3
+        if (historyRows.length >= 4) {
+             const row = historyRows[3];
+             prev3Sx = normalizeZodiac(row.shengxiao || getShengXiao(row.special_code));
+        }
+    }
 
-    // 计算得分
+    // 1. 挖掘规律
+    const stats = mineDeepPatterns(historyRows);
+
+    // 2. 计算遗漏偏离度 (Omission Deviation)
+    const omission = {};
+    const avgOmission = {}; // 平均遗漏
+    ZODIAC_SEQ.forEach(z => { omission[z] = 0; avgOmission[z] = 0; });
+    
+    // 计算当前遗漏
+    for(let i=0; i<historyRows.length; i++) {
+        const sx = normalizeZodiac(historyRows[i].shengxiao || getShengXiao(historyRows[i].special_code));
+        Object.keys(omission).forEach(k => {
+            if(omission[k] !== -1) {
+                if(k === sx) omission[k] = -1; else omission[k]++;
+            }
+        });
+    }
+    // 计算偏离度 (修正 -1 为 0)
+    Object.keys(omission).forEach(k => {
+        if(omission[k] === -1) omission[k] = 0;
+        // 理论平均遗漏 12
+        avgOmission[k] = (omission[k] / 12).toFixed(2);
+    });
+
+    // ----------------------------
+    // 计算总分
+    // ----------------------------
     let scores = {};
     for (let i = 1; i <= 49; i++) scores[i] = 0;
 
+    // A. 生肖得分 (基于真实转移概率)
     ZODIAC_SEQ.forEach(z => {
-        const zProb = (stats.zodiac_next[lastSx]?.[z] || 0) * 10 * weights.zodiac_trend;
-        const omScore = (stats.omission[z] / 12) * 5 * weights.omission;
+        let zScore = 0;
+        
+        // 规律1: 上期生肖 -> 本期生肖 (概率)
+        const directProb = stats.zodiac_next[lastSx]?.[z] || 0;
+        zScore += directProb * 2.0;
+
+        // 规律2: 隔三期规律
+        if (prev3Sx) {
+            const skipProb = stats.skip3_zodiac[prev3Sx]?.[z] || 0;
+            zScore += skipProb * 3.0; // 隔期规律权重较高
+        }
+
+        // 规律3: 遗漏偏离度 (偏离度 > 3.0 说明极冷，防反弹；偏离度 < 0.5 说明过热，可杀)
+        const dev = parseFloat(avgOmission[z]);
+        if (dev > 3.0) zScore += 30; // 极冷回补
+        else if (dev < 0.5 && dev > 0) zScore -= 10; // 过热杀号
+        
+        // 分配给号码
         const nums = getNumbersByZodiac(z);
-        nums.forEach(n => scores[n] += (zProb + omScore));
+        nums.forEach(n => scores[n] += zScore);
     });
 
+    // B. 号码/尾数得分
     for (let n = 1; n <= 49; n++) {
-        const tProb = (stats.tail_next[lastTail]?.[n%10] || 0) * 8 * weights.tail_trend;
-        scores[n] += tProb;
+        const tail = n % 10;
+        
+        // 规律4: 平码尾数 -> 特码尾数
+        // 遍历上期所有平码尾数，看它们历史上有多少次带出了当前尾数
+        let flatTailScore = 0;
+        lastFlatTails.forEach(ft => {
+            flatTailScore += (stats.flat_tail_next_special[ft]?.[tail] || 0);
+        });
+        scores[n] += flatTailScore * 1.5;
 
-        const cProb = (stats.color_next[lastColor]?.[getBose(n)] || 0) * 6 * weights.color_jump;
-        scores[n] += cProb;
-
-        const hsType = getHeShu(n) % 2 === 0 ? 'even' : 'odd';
-        const hsProb = (stats.composite_next[lastHeShu]?.[hsType] || 0) * 5 * weights.composite;
-        scores[n] += hsProb;
-
-        const rType = get012Road(n);
-        const rProb = (stats.road_next[lastRoad]?.[rType] || 0) * 5 * weights.road_012;
-        scores[n] += rProb;
-
-        const compScore = (stats.companion[lastCode]?.[n] || 0) * 3 * weights.companion;
-        scores[n] += compScore;
+        // 规律5: 邻孤传 (Neighbor)
+        // 上期特码的邻号 (+1/-1)
+        if (Math.abs(n - lastCode) === 1) scores[n] += 15;
+        if (n === lastCode) scores[n] += 5; // 重号
     }
 
-    // 排序
-    const allNumsSorted = Object.keys(scores).map(n => ({ num: parseInt(n), score: scores[n] })).sort((a,b) => b.score - a.score);
-
+    // ----------------------------
+    // 结果提取
+    // ----------------------------
+    
+    // 1. 生肖排行
     const zodiacScores = {};
     ZODIAC_SEQ.forEach(z => {
         const nums = getNumbersByZodiac(z);
-        let maxS = -9999;
-        nums.forEach(n => { if(scores[n] > maxS) maxS = scores[n]; });
-        zodiacScores[z] = maxS;
+        let total = 0; nums.forEach(n => total += scores[n]);
+        zodiacScores[z] = total / nums.length;
     });
     const sortedZodiacs = Object.keys(zodiacScores).sort((a,b) => zodiacScores[b] - zodiacScores[a]);
 
@@ -257,6 +218,11 @@ function generateSinglePrediction(historyRows) {
     const zhuSan = sortedZodiacs.slice(0, 3);
     const killZodiacs = sortedZodiacs.slice(sortedZodiacs.length - 3).reverse();
 
+    // 2. 特码前五
+    const allNumsSorted = Object.keys(scores).map(n => ({ num: parseInt(n), score: scores[n] })).sort((a,b) => b.score - a.score);
+    const specialTop5 = allNumsSorted.slice(0, 5).map(i => ({ num: i.num, zodiac: getShengXiao(i.num), color: getBose(i.num) }));
+
+    // 3. 一肖一码
     const zodiacOneCode = [];
     ZODIAC_SEQ.forEach(z => {
         const nums = getNumbersByZodiac(z);
@@ -266,32 +232,26 @@ function generateSinglePrediction(historyRows) {
         zodiacOneCode.push({ zodiac: z, num: bestNum, color: getBose(bestNum) });
     });
 
-    const specialTop5 = allNumsSorted.slice(0, 5).map(i => ({ num: i.num, zodiac: getShengXiao(i.num), color: getBose(i.num) }));
-
+    // 4. 精选平码 (剔除特码)
     const excludeSet = new Set(specialTop5.map(i => i.num));
-    const normalSorted = Object.keys(scores).map(n => ({ 
-        num: parseInt(n), 
-        score: (stats.companion[lastCode]?.[n] || 0) * 10 + (scores[n] * 0.3) 
-    })).sort((a,b) => b.score - a.score);
-    
-    const normalTop6 = normalSorted.filter(i => !excludeSet.has(i.num)).slice(0, 6).map(i => ({
+    const normalTop6 = allNumsSorted.filter(i => !excludeSet.has(i.num)).slice(0, 6).map(i => ({
         num: i.num, zodiac: getShengXiao(i.num), color: getBose(i.num)
     }));
 
+    // 5. 常规统计 (尾数/波色/大小)
     const tailCounts = {};
     for(let i=0; i<10; i++) tailCounts[i]=0;
-    historyRows.slice(0, 60).forEach(r => tailCounts[r.special_code%10]++);
+    // 统计得分最高的尾数
+    for(let n=1; n<=49; n++) tailCounts[n%10] += scores[n];
     const sortedTails = Object.keys(tailCounts).sort((a,b)=>tailCounts[b]-tailCounts[a]).slice(0, 3).map(Number).sort((a,b)=>a-b);
 
-    const headCounts = {0:0,1:0,2:0,3:0,4:0};
-    historyRows.slice(0, 20).forEach(r => headCounts[Math.floor(r.special_code/10)]++);
-    const sortedHeads = Object.keys(headCounts).sort((a,b)=>headCounts[b]-headCounts[a]).map(Number);
-
-    const waveCounts = {red:0, blue:0, green:0};
-    historyRows.slice(0, 20).forEach(r => waveCounts[getBose(r.special_code)]++);
-    const sortedWaves = Object.keys(waveCounts).sort((a,b)=>waveCounts[b]-waveCounts[a]);
-
     const bestNum = specialTop5[0].num;
+    const hotHead = Math.floor(bestNum / 10);
+    const fangHead = Math.floor(specialTop5[1].num / 10);
+    
+    // 形态预测：基于历史形态趋势
+    const nextBig = stats.shape_trend.big > stats.shape_trend.small;
+    const nextOdd = stats.shape_trend.odd > stats.shape_trend.even;
 
     return {
         zodiac_one_code: zodiacOneCode,
@@ -300,17 +260,15 @@ function generateSinglePrediction(historyRows) {
         liu_xiao: wuXiao,
         zhu_san: zhuSan,
         kill_zodiacs: killZodiacs,
-        zhu_bo: sortedWaves[0],
-        fang_bo: sortedWaves[1],
-        hot_head: sortedHeads[0],
-        fang_head: sortedHeads[1],
+        zhu_bo: getBose(bestNum), // 跟随最强特码
+        fang_bo: getBose(specialTop5[1].num),
+        hot_head: hotHead,
+        fang_head: fangHead,
         rec_tails: sortedTails,
-        da_xiao: bestNum >= 25 ? '大' : '小',
-        dan_shuang: bestNum % 2 !== 0 ? '单' : '双',
+        da_xiao: nextBig ? '大' : '小',
+        dan_shuang: nextOdd ? '单' : '双',
         meta: {
-            sample_size: stats.totalRecords,
-            last_zodiac: lastSx,
-            algorithm: "V30.1 Deep Mining"
+            algorithm: "V40.0 Pure Math"
         }
     };
 }
