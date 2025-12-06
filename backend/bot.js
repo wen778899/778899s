@@ -4,30 +4,27 @@ process.env.TZ = 'Asia/Shanghai';
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const db = require('./db');
-// 引入核心算法库 (请确保 utils.js 是 V100.1 版本)
+// 引入 V120.0 核心
 const { parseLotteryResult, buildGlobalMatrix, runSimulationBatch, finalizePrediction } = require('./utils');
 
 // --- 全局配置 ---
 let AUTO_SEND_ENABLED = true;
-// [配置] 默认运行时长 1 小时 (可由用户修改)
-let DEEP_CALC_DURATION = 1 * 60 * 60 * 1000; 
+let DEEP_CALC_DURATION = 1 * 60 * 60 * 1000; // 默认 1 小时
 const LOTTERY_API_URL = 'https://history.macaumarksix.com/history/macaujc2/y/2025'; 
 
-// 每次 Tick (50ms) 跑的模拟次数
-const BATCH_SIZE = 50000;
+const BATCH_SIZE = 50000; // 单次模拟量
 
-// 核心计算任务状态
 let CALC_TASK = {
     isRunning: false,
     startTime: 0,
     targetDuration: 0,
     currentIssue: '',
-    iterations: 0,          // 当前已模拟次数
-    historyCache: null,     // 历史数据缓存
-    matrixCache: null,      // 矩阵缓存
-    aggregatedResults: { zodiacWins: {}, numWins: {} }, // 累积结果
-    bestPrediction: null,   // 当前最佳结果
-    isProcessing: false     // 并发锁
+    iterations: 0,
+    historyCache: null,
+    matrixCache: null,
+    aggregatedResults: { zodiacWins: {}, numWins: {} },
+    bestPrediction: null,
+    isProcessing: false 
 };
 
 let LAST_SUCCESS_DATE = null; 
@@ -75,7 +72,7 @@ function formatPredictionText(issue, pred, isFinal = false) {
     const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
     const emojiMap = { red: '🔴', blue: '🔵', green: '🟢' };
     
-    let title = isFinal ? `🏁 第 ${issue} 期 最终决策 (V110.0)` : `🧠 第 ${issue} 期 深度模拟中...`;
+    let title = isFinal ? `🏁 第 ${issue} 期 最终决策 (V120.0)` : `🧠 第 ${issue} 期 高斯模拟中...`;
     
     const safeJoin = (arr) => arr ? arr.join(' ') : '?';
 
@@ -100,7 +97,6 @@ function formatPredictionText(issue, pred, isFinal = false) {
     const tailsStr = (pred.rec_tails && Array.isArray(pred.rec_tails)) ? pred.rec_tails.join('.') : '?';
     const headStr = (pred.hot_head !== undefined) ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头` : '?';
 
-    // 状态行：显示时间进度和模拟次数
     let statusLine = "";
     if (isFinal) {
         statusLine = `✅ 计算完成 | 累计模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次`;
@@ -110,8 +106,7 @@ function formatPredictionText(issue, pred, isFinal = false) {
         const total = CALC_TASK.targetDuration;
         const pct = total > 0 ? ((elapsed / total) * 100).toFixed(1) : 0;
         const timeLeft = Math.ceil((total - elapsed) / 60000);
-        
-        statusLine = `🔄 进度: ${pct}% (剩 ${timeLeft} 分)\n📊 模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次 (每秒约100万)`;
+        statusLine = `🔄 进度: ${pct}% (剩 ${timeLeft} 分)\n📊 模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次`;
     }
 
     return `
@@ -154,28 +149,26 @@ function formatLotteryResult(issue, numbers, special, shengxiao) {
 
 // --- 核心：启动任务 ---
 async function startCalculationTask(issue, historyRows) {
-    // 1. 初始化任务
     CALC_TASK = {
         isRunning: true,
         startTime: Date.now(),
-        targetDuration: DEEP_CALC_DURATION, // 使用用户设定的时间
+        targetDuration: DEEP_CALC_DURATION,
         currentIssue: issue,
         iterations: 0,
         historyCache: historyRows,
-        // 预构建矩阵，只做一次，极大提高后续模拟速度
-        matrixCache: buildGlobalMatrix(historyRows), 
+        matrixCache: buildGlobalMatrix(historyRows),
         aggregatedResults: { zodiacWins: {}, numWins: {} },
         bestPrediction: null,
         isProcessing: false
     };
     
-    // 2. 立即生成一个"冷启动"预测存入数据库 (防止用户查询为空)
-    const initialPred = finalizePrediction({ zodiacWins: {}, numWins: {} }, historyRows); // 空结果会触发兜底
+    // 立即生成冷启动数据
+    const initialPred = finalizePrediction({ zodiacWins: {}, numWins: {} }, historyRows); 
     const jsonPred = JSON.stringify(initialPred);
     await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, issue]);
     CALC_TASK.bestPrediction = initialPred;
 
-    console.log(`[Task] 任务启动: 第 ${issue} 期, 时长: ${DEEP_CALC_DURATION/3600000}h`);
+    console.log(`[Task] 启动 V120.0 模拟: 第 ${issue} 期`);
 }
 
 // --- 自动抓取 ---
@@ -193,7 +186,6 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
             for (let i = list.length - 1; i >= 0; i--) {
                 const item = list[i];
                 const issue = item.expect;
-                
                 const [rows] = await db.query('SELECT id FROM lottery_results WHERE issue = ?', [issue]);
                 if (rows.length > 0) continue; 
 
@@ -211,7 +203,6 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
 
                 console.log(`[Fetch] 补录: 第 ${issue} 期`);
                 newCount++;
-                
                 if (i === 0) {
                     latestIssue = issue;
                     latestResult = { numbers: jsonNums, special: specialCode, shengxiao: shengxiao };
@@ -219,20 +210,17 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
             }
 
             if (newCount > 0) {
-                // 1. 读取全量历史
                 const [allHistory] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
                 
-                // 2. 播报开奖
                 if (AUTO_SEND_ENABLED && process.env.CHANNEL_ID && latestResult) {
                     const resultMsg = formatLotteryResult(latestIssue, latestResult.numbers, latestResult.special, latestResult.shengxiao);
                     await bot.telegram.sendMessage(process.env.CHANNEL_ID, resultMsg, { parse_mode: 'Markdown' });
                 }
 
-                // 3. 启动基于时间的深度计算
                 await startCalculationTask(latestIssue, allHistory);
 
                 if (ADMIN_ID) {
-                    bot.telegram.sendMessage(ADMIN_ID, `✅ 补录 ${newCount} 期，模拟任务已启动 (${DEEP_CALC_DURATION/3600000}h)。`);
+                    bot.telegram.sendMessage(ADMIN_ID, `✅ 补录 ${newCount} 期，V120.0 模拟已启动。`);
                 }
                 
                 const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
@@ -256,9 +244,7 @@ function startBot() {
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
     const CHANNEL_ID = process.env.CHANNEL_ID;
 
-    // ============================
-    // 核心定时器: 模拟运算 (50ms)
-    // ============================
+    // 定时器 1: 模拟循环 (50ms)
     setInterval(async () => {
         if (!CALC_TASK.isRunning) return;
 
@@ -266,20 +252,15 @@ function startBot() {
         const elapsed = now - CALC_TASK.startTime;
         const isTimeUp = elapsed >= CALC_TASK.targetDuration;
 
-        // --- 1. 时间到 -> 结束任务 ---
         if (isTimeUp) {
             CALC_TASK.isRunning = false;
-            
             try {
-                // 生成最终结果
                 const finalPred = finalizePrediction(CALC_TASK.aggregatedResults, CALC_TASK.historyCache);
                 const jsonPred = JSON.stringify(finalPred);
                 
-                // 存库
                 await db.execute('UPDATE lottery_results SET deep_prediction=?, next_prediction=? WHERE issue=?', 
                     [jsonPred, jsonPred, CALC_TASK.currentIssue]);
                 
-                // 推送
                 if (AUTO_SEND_ENABLED && CHANNEL_ID) {
                     const nextIssue = parseInt(CALC_TASK.currentIssue) + 1;
                     const msg = formatPredictionText(nextIssue, finalPred, true);
@@ -287,19 +268,17 @@ function startBot() {
                 }
                 
                 if (ADMIN_ID) {
-                    bot.telegram.sendMessage(ADMIN_ID, `🎉 **计算完成！**\n总耗时: ${(elapsed/3600000).toFixed(1)}h\n模拟次数: ${CALC_TASK.iterations.toLocaleString()}`);
+                    bot.telegram.sendMessage(ADMIN_ID, `🎉 **计算完成！**\n总模拟: ${CALC_TASK.iterations.toLocaleString()}次`);
                 }
             } catch (e) { console.error("Finalize Error:", e); }
             return;
         }
 
-        // --- 2. 时间未到 -> 继续跑模拟 (5万次/Tick) ---
         try {
-            if (!CALC_TASK.matrixCache) return; // 安全检查
-
+            if (!CALC_TASK.matrixCache) return;
+            // 高斯批处理
             const batchResults = runSimulationBatch(CALC_TASK.historyCache, CALC_TASK.matrixCache, BATCH_SIZE);
             
-            // 累加结果
             Object.keys(batchResults.zodiacWins).forEach(z => {
                 CALC_TASK.aggregatedResults.zodiacWins[z] = (CALC_TASK.aggregatedResults.zodiacWins[z] || 0) + batchResults.zodiacWins[z];
             });
@@ -309,30 +288,25 @@ function startBot() {
 
             CALC_TASK.iterations += BATCH_SIZE;
 
-            // 每跑 500 万次，更新一下数据库里的"预览版"，防止中途断电白跑
+            // 定期存档 (每500万次)
             if (CALC_TASK.iterations % 5000000 === 0) {
                 const tempPred = finalizePrediction(CALC_TASK.aggregatedResults, CALC_TASK.historyCache);
                 CALC_TASK.bestPrediction = tempPred;
                 const jsonPred = JSON.stringify(tempPred);
                 await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, CALC_TASK.currentIssue]);
             }
-
         } catch (e) { console.error("Sim Error:", e); }
     }, 50);
 
-    // 定时器: 窗口抓取 (1分钟)
+    // 定时器 2: 窗口抓取 (1分钟)
     setInterval(() => {
         const now = new Date();
-        const bjtStr = now.toLocaleString("en-US", {timeZone: "Asia/Shanghai"});
-        const bjtDate = new Date(bjtStr);
-        const hour = bjtDate.getHours();
-        const minute = bjtDate.getMinutes();
-        const todayStr = bjtStr.split(',')[0];
+        const hour = now.getUTCHours() + 8; 
+        const minute = now.getUTCMinutes();
+        const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
 
-        // 窗口: 21:33 - 21:45
-        if (hour === 21 && minute >= 33 && minute <= 45) {
-            if (LAST_SUCCESS_DATE === todayStr) return;
-            fetchAndProcessLottery(bot, ADMIN_ID, false);
+        if ((hour === 21 || hour === 45) && minute >= 33 && minute <= 45) {
+             if (LAST_SUCCESS_DATE !== todayStr) fetchAndProcessLottery(bot, ADMIN_ID, false);
         }
     }, 60 * 1000);
 
@@ -341,10 +315,7 @@ function startBot() {
         const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
         if (!rows.length) return ctx.reply('暂无数据');
         const row = rows[0];
-        
-        // 优先显示内存中的实时结果(如果正在跑)，否则显示数据库里的
         let pred = CALC_TASK.isRunning ? CALC_TASK.bestPrediction : (safeParse(row.deep_prediction) || safeParse(row.next_prediction));
-        
         if (!pred) return ctx.reply('⏳ 正在冷启动模拟，请稍候...');
         
         ctx.reply(formatPredictionText(parseInt(row.issue)+1, pred, !CALC_TASK.isRunning), { 
@@ -368,16 +339,13 @@ function startBot() {
         } catch(e) {}
     });
 
-    // 计算进度 (显示时间和次数)
     bot.hears('⏳ 计算进度', (ctx) => {
         if (!CALC_TASK.isRunning) return ctx.reply('💤 无活跃任务');
         const now = Date.now();
         const elapsed = now - CALC_TASK.startTime;
         const total = CALC_TASK.targetDuration;
         const pct = ((elapsed / total) * 100).toFixed(1);
-        const timeLeft = Math.ceil((total - elapsed) / 60000);
-        
-        ctx.reply(`📊 进度: ${pct}%\n⏱️ 剩余: ${timeLeft} 分钟\n🔄 已模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次`);
+        ctx.reply(`📊 进度: ${pct}%\n🔄 已模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次`);
     });
 
     bot.hears('⚙️ 设置时长', (ctx) => ctx.reply(`当前时长: ${DEEP_CALC_DURATION/3600000}小时\n请选择:`, getDurationMenu()));
@@ -418,7 +386,7 @@ function startBot() {
 
     bot.hears('🔄 立即抓取', async (ctx) => {
         if (ctx.from.id !== ADMIN_ID) return;
-        ctx.reply('⏳ 正在请求接口(全量补录)...');
+        ctx.reply('⏳ 正在请求接口...');
         await fetchAndProcessLottery(bot, ADMIN_ID, true);
     });
 
@@ -429,10 +397,10 @@ function startBot() {
     });
     bot.start((ctx) => { 
         if(ctx.from) userStates[ctx.from.id]=null; 
-        ctx.reply('🤖 V110.0 Time Control Ready', getMainMenu()); 
+        ctx.reply('🤖 V120.0 Gaussian Monte Carlo Ready', getMainMenu()); 
     });
 
-    // 监听手动录入 & 删除
+    // 监听手动录入
     bot.on(['text', 'channel_post'], async (ctx) => {
         const text = ctx.message?.text || ctx.channelPost?.text;
         if (!text) return;
@@ -450,10 +418,8 @@ function startBot() {
             await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())`, 
                 [issue, jsonNums, specialCode, shengxiao]);
             
-            // 读取全量历史
             const [historyRows] = await db.query('SELECT numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC');
-            
-            ctx.reply(`✅ 手动录入成功，正在启动 ${DEEP_CALC_DURATION/3600000} 小时深度模拟...`);
+            ctx.reply(`✅ 手动录入成功，正在启动 ${DEEP_CALC_DURATION/3600000} 小时高斯模拟...`);
             startCalculationTask(issue, historyRows);
         }
     });
