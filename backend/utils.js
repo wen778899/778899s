@@ -1,6 +1,6 @@
 /**
- * 六合宝典核心算法库 V12.3 (Node.js 生产修复版)
- * 包含: KNN, 增强统计, 优化版蒙特卡洛, 预测引擎
+ * 六合宝典核心算法库 V12.3 (Node.js 完整移植版)
+ * 包含: CONFIG, Formatter, KNN, 增强统计, 蒙特卡洛, 预测引擎
  */
 const { Lunar } = require('lunar-javascript');
 
@@ -9,10 +9,12 @@ const { Lunar } = require('lunar-javascript');
 // ==============================================================================
 const CONFIG = {
   SYSTEM: {
+    NAME: "🇲🇴 澳六预测",
     VERSION: "V12.3 Node.js Port",
     KNN_K_VALUE: 10,
     STATS_WINDOW_SIZE: 100,
-    MIN_HISTORY_FOR_ALGORITHMS: { traditional: 2, knn: 10, stats: 20, advanced: 5 }
+    MIN_HISTORY_FOR_ALGORITHMS: { traditional: 2, knn: 10, stats: 20, advanced: 5 },
+    ALGORITHM_TIMEOUTS: { traditional: 3000, knn: 4000, stats: 5000, advanced: 8000 }
   },
   DEFAULT_ALGO_WEIGHTS: {
     w_zodiac_transfer: 2.5, w_zodiac_relation: 2.0, w_color_transfer: 1.8,
@@ -65,6 +67,12 @@ class Formatter {
     if (num % 2 === 0 || num % 3 === 0) return false;
     for (let i = 5; i * i <= num; i += 6) { if (num % i === 0 || num % (i + 2) === 0) return false; }
     return true;
+  }
+  static calculateNumberPattern(num) {
+    const patterns = [];
+    if (this.isPrime(num)) patterns.push("质数"); else patterns.push("合数");
+    if (num % 7 === 0) patterns.push("7倍数"); if (num % 8 === 0) patterns.push("8倍数");
+    return patterns;
   }
   static calculateFeatures(number) {
     const num = parseInt(number);
@@ -185,6 +193,7 @@ class EnhancedStatistics {
     const stats = this.createEmptyStats();
     const slice = history.slice(0, Math.min(history.length, CONFIG.SYSTEM.STATS_WINDOW_SIZE));
     
+    // 倒序遍历：i是新，i+1是旧
     for (let i = 0; i < slice.length - 1; i++) {
         const currRec = slice[i];
         const prevRec = slice[i+1];
@@ -250,8 +259,6 @@ class OptimizedMonteCarloEngine {
 // ==============================================================================
 class PredictionEngine {
     static async generate(history, weights, algorithm="advanced") {
-        if (!history || history.length < 5) return null; // 数据不足
-
         const lastRecord = history[0];
         const lastSpecial = parseInt(lastRecord.special_code);
         const lastAttr = Formatter.getAttributes(lastSpecial);
@@ -361,7 +368,7 @@ class PredictionEngine {
     }
 }
 
-// 文本解析
+// 文本解析 (保留旧功能兼容)
 function parseLotteryResult(text) {
     try {
         const issueMatch = text.match(/第:?(\d+)期/);
@@ -381,6 +388,7 @@ function parseLotteryResult(text) {
         const flatNumbers = allNums.slice(0, 6);
         const specialCode = allNums[6];
         let shengxiao = Formatter.getAttributes(specialCode).zodiac;
+        // 尝试从文本获取生肖
         for (const line of lines) {
             if (/[鼠牛虎兔龍龙蛇馬马羊猴雞鸡狗豬猪]/.test(line)) {
                 const animals = line.trim().split(/\s+/);
