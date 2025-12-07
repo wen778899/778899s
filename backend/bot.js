@@ -4,7 +4,7 @@ process.env.TZ = 'Asia/Shanghai';
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const db = require('./db');
-// 引入 V12.3 引擎
+// 引入 V12.3 引擎 (注意这里的解构)
 const { CONFIG, PredictionEngine, parseLotteryResult } = require('./utils');
 
 const LOTTERY_API_URL = 'https://history.macaumarksix.com/history/macaujc2/y/2025'; 
@@ -13,6 +13,7 @@ let AUTO_SEND_ENABLED = true;
 const userStates = {};
 
 // --- HTML 渲染器 (适配 V12.3 样式) ---
+// 确保从 CONFIG 中获取 EMOJI
 const EMOJI = CONFIG.EMOJI;
 
 function renderPreview(prediction) {
@@ -143,7 +144,6 @@ async function fetchAndProcessLottery(bot, ADMIN_ID) {
                 `, [issue, jsonNums, specialCode, shengxiao]);
                 
                 newCount++;
-                // 记录最新一期的数据用于播报
                 if (i === 0) { latestIssue = issue; latestResult = {numbers:jsonNums, special:specialCode, shengxiao}; }
             }
 
@@ -195,6 +195,7 @@ function startBot() {
             const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
             if (!rows.length) return ctx.reply('无数据');
             
+            // 尝试解析库里的
             let pred = safeParse(rows[0].next_prediction);
             if (!pred) {
                 ctx.reply('⏳ 正在实时计算 V12.3 增强预测...');
@@ -257,15 +258,8 @@ function startBot() {
         }
     });
 
-    // 启动保护
-    (async () => {
-        try {
-            await bot.launch();
-            console.log('🤖 V12.3 Node Port Ready');
-        } catch (e) {
-            console.error('❌ Bot launch failed:', e);
-        }
-    })();
+    bot.start((ctx) => ctx.reply('🤖 V12.3 Node Port Ready', getMainMenu()));
+    bot.launch();
     
     // 优雅退出
     process.once('SIGINT', () => bot.stop('SIGINT'));
