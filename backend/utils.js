@@ -1,21 +1,13 @@
 /**
- * 六合宝典核心算法库 V12.3 (Node.js 完整移植版)
- * 包含: CONFIG, Formatter, KNN, 增强统计, 蒙特卡洛, 预测引擎
+ * 六合宝典核心算法库 V12.3 (Stable Node.js Port)
  */
 const { Lunar } = require('lunar-javascript');
 
-// ==============================================================================
-// 1. 全局配置与常量定义
-// ==============================================================================
+// ==========================================
+// 1. 全局配置
+// ==========================================
 const CONFIG = {
-  SYSTEM: {
-    NAME: "🇲🇴 澳六预测",
-    VERSION: "V12.3 Node.js Port",
-    KNN_K_VALUE: 10,
-    STATS_WINDOW_SIZE: 100,
-    MIN_HISTORY_FOR_ALGORITHMS: { traditional: 2, knn: 10, stats: 20, advanced: 5 },
-    ALGORITHM_TIMEOUTS: { traditional: 3000, knn: 4000, stats: 5000, advanced: 8000 }
-  },
+  SYSTEM: { VERSION: "V12.3 Stable", KNN_K_VALUE: 10, STATS_WINDOW_SIZE: 100 },
   DEFAULT_ALGO_WEIGHTS: {
     w_zodiac_transfer: 2.5, w_zodiac_relation: 2.0, w_color_transfer: 1.8,
     w_tail_correlation: 1.5, w_number_frequency: 1.3, w_monte_carlo: 2.5,
@@ -43,15 +35,12 @@ const CONFIG = {
     eye: "👁️", lock: "🔒", dice: "🎲", calendar: "📅", hourglass: "⏳", money: "💰", target: "🎯",
     brain: "🧠", science: "🔬", chart_up: "📈", knn: "🔍", statistics: "📊", tail: "🔟", head: "📌",
     size: "⚖️", odd_even: "🔄", lightning: "⚡", bulb: "💡", gear: "⚙️", hammer: "🔨", crown: "👑"
-  },
-  ALGORITHM_NAMES: {
-    traditional: "传统算法", knn: "KNN算法", stats: "统计算法", advanced: "增强算法"
   }
 };
 
-// ==============================================================================
-// 2. 工具类
-// ==============================================================================
+// ==========================================
+// 2. 工具函数
+// ==========================================
 class Formatter {
   static getAttributes(number) {
     const num = parseInt(number);
@@ -68,12 +57,6 @@ class Formatter {
     for (let i = 5; i * i <= num; i += 6) { if (num % i === 0 || num % (i + 2) === 0) return false; }
     return true;
   }
-  static calculateNumberPattern(num) {
-    const patterns = [];
-    if (this.isPrime(num)) patterns.push("质数"); else patterns.push("合数");
-    if (num % 7 === 0) patterns.push("7倍数"); if (num % 8 === 0) patterns.push("8倍数");
-    return patterns;
-  }
   static calculateFeatures(number) {
     const num = parseInt(number);
     if (isNaN(num) || num < 1 || num > 49) return null;
@@ -84,30 +67,30 @@ class Formatter {
       isBig: num >= 25, isOdd: num % 2 !== 0, isPrime: this.isPrime(num)
     };
   }
-  static isAlgorithmSupported(algorithm, historyLength) {
-    const min = CONFIG.SYSTEM.MIN_HISTORY_FOR_ALGORITHMS[algorithm] || 2;
-    return historyLength >= min;
-  }
 }
 
-// ==============================================================================
+// ==========================================
 // 3. KNN 算法
-// ==============================================================================
+// ==========================================
 class KNNAlgorithm {
-  static findSimilarRecords(history, currentRecord, k = CONFIG.SYSTEM.KNN_K_VALUE) {
+  static findSimilarRecords(history, currentRecord, k = 10) {
     if (!history || history.length < 10 || !currentRecord) return [];
     const currentFeatures = this.extractFeatures(currentRecord);
     if (!currentFeatures) return [];
     const distances = [];
+    // 只取最近100期作为样本，避免计算量过大
     const recentHistory = history.slice(0, Math.min(100, history.length));
     
     for (let i = 1; i < recentHistory.length; i++) {
       const record = recentHistory[i];
       const recordFeatures = this.extractFeatures(record);
       if (!recordFeatures) continue;
+      
       const distance = this.calculateDistance(currentFeatures, recordFeatures);
-      const nextRecord = recentHistory[i - 1]; 
-      if (nextRecord) distances.push({ record: nextRecord, distance: distance, similarity: 1 / (1 + distance) });
+      const nextRecord = recentHistory[i - 1]; // 下一期
+      if (nextRecord) {
+          distances.push({ record: nextRecord, distance: distance, similarity: 1 / (1 + distance) });
+      }
     }
     distances.sort((a, b) => a.distance - b.distance);
     return distances.slice(0, k);
@@ -117,9 +100,16 @@ class KNNAlgorithm {
     if (!record) return null;
     const special = parseInt(record.special_code) || 1;
     let normals = [];
-    try { if (typeof record.numbers === 'string') normals = JSON.parse(record.numbers); else if(Array.isArray(record.numbers)) normals=record.numbers; } catch(e){}
+    try { 
+        if (typeof record.numbers === 'string') normals = JSON.parse(record.numbers); 
+        else if(Array.isArray(record.numbers)) normals=record.numbers; 
+    } catch(e){}
+    
     const specialFeatures = Formatter.calculateFeatures(special);
-    const normalFeatures = { zodiacCount: {}, colorCount: {}, tailCount: {}, headCount: {}, sizeCount: { big: 0, small: 0 }, oddEvenCount: { odd: 0, even: 0 } };
+    const normalFeatures = { 
+        zodiacCount: {}, colorCount: {}, tailCount: {}, headCount: {}, 
+        sizeCount: { big: 0, small: 0 }, oddEvenCount: { odd: 0, even: 0 } 
+    };
     
     for (const num of normals) {
         const attr = Formatter.getAttributes(num);
@@ -185,30 +175,34 @@ class KNNAlgorithm {
   }
 }
 
-// ==============================================================================
+// ==========================================
 // 4. 增强统计
-// ==============================================================================
+// ==========================================
 class EnhancedStatistics {
   static analyzeHistoryStatistics(history) {
     const stats = this.createEmptyStats();
-    const slice = history.slice(0, Math.min(history.length, CONFIG.SYSTEM.STATS_WINDOW_SIZE));
+    // 取最近100期进行统计
+    const slice = history.slice(0, Math.min(history.length, 100));
     
-    // 倒序遍历：i是新，i+1是旧
+    // 倒序遍历：i是最新，i+1是前一期
     for (let i = 0; i < slice.length - 1; i++) {
-        const currRec = slice[i];
-        const prevRec = slice[i+1];
+        const currRec = slice[i];     // 本期
+        const prevRec = slice[i+1];   // 上期
         
         const currSpec = parseInt(currRec.special_code);
         const prevSpec = parseInt(prevRec.special_code);
         const currAttr = Formatter.getAttributes(currSpec);
         const prevAttr = Formatter.getAttributes(prevSpec);
 
+        // 生肖转移：上期XX -> 本期YY
         const keyZ = `${prevAttr.zodiac}->${currAttr.zodiac}`;
         stats.zodiacPatterns.sameZodiac[keyZ] = (stats.zodiacPatterns.sameZodiac[keyZ] || 0) + 1;
 
+        // 波色转移
         const keyC = `${prevAttr.color}->${currAttr.color}`;
         stats.colorPatterns.sameColor[keyC] = (stats.colorPatterns.sameColor[keyC] || 0) + 1;
 
+        // 尾数转移
         const prevTail = prevSpec % 10;
         const currTail = currSpec % 10;
         const keyT = `${prevTail}->${currTail}`;
@@ -231,20 +225,22 @@ class EnhancedStatistics {
   }
 }
 
-// ==============================================================================
+// ==========================================
 // 5. 蒙特卡洛
-// ==============================================================================
+// ==========================================
 class OptimizedMonteCarloEngine {
     static runOptimizedSimulation(history, iterations=5000) {
         const result = { specialPredictions: [], normalPredictions: [] };
         const freqSpec = {};
         for(let i=1; i<=49; i++) freqSpec[i] = 0;
-        const recent = history.slice(0, 50);
+        const recent = history.slice(0, 50); // 基于最近50期热度
         
-        for(let k=0; k<iterations; k++) {
-            const pick = recent[Math.floor(Math.random() * recent.length)];
-            const spec = parseInt(pick.special_code);
-            freqSpec[spec]++;
+        if (recent.length > 0) {
+            for(let k=0; k<iterations; k++) {
+                const pick = recent[Math.floor(Math.random() * recent.length)];
+                const spec = parseInt(pick.special_code);
+                freqSpec[spec]++;
+            }
         }
         
         const sorted = Object.entries(freqSpec).map(([k,v])=>({number:parseInt(k), probability:v/iterations})).sort((a,b)=>b.probability-a.probability);
@@ -254,30 +250,32 @@ class OptimizedMonteCarloEngine {
     }
 }
 
-// ==============================================================================
+// ==========================================
 // 6. 预测引擎
-// ==============================================================================
+// ==========================================
 class PredictionEngine {
     static async generate(history, weights, algorithm="advanced") {
+        if (!history || history.length < 5) return null; // 至少需要5期数据
+
         const lastRecord = history[0];
         const lastSpecial = parseInt(lastRecord.special_code);
         const lastAttr = Formatter.getAttributes(lastSpecial);
 
-        // 1. 传统分数
+        // 1. 初始化分数
         const scores = {};
         for(let i=1; i<=49; i++) scores[i] = { score: 0, probability: 0, contributions: [] };
         
-        // 2. 统计分析
+        // 2. 运行统计分析
         const stats = EnhancedStatistics.analyzeHistoryStatistics(history);
         
-        // 3. KNN
+        // 3. 运行 KNN
         const similar = KNNAlgorithm.findSimilarRecords(history, lastRecord);
         const knnRes = KNNAlgorithm.predictFromSimilarRecords(similar);
 
-        // 4. 蒙特卡洛
+        // 4. 运行 蒙特卡洛
         const monteRes = OptimizedMonteCarloEngine.runOptimizedSimulation(history);
 
-        // 汇总打分
+        // 5. 汇总打分
         for(let i=1; i<=49; i++) {
             const attr = Formatter.getAttributes(i);
             let s = 0;
@@ -301,7 +299,7 @@ class PredictionEngine {
             scores[i].score = s;
         }
 
-        // 提取特码前五
+        // 6. 提取特码前五
         const allSorted = Object.entries(scores).map(([k,v])=>({
             number: parseInt(k), score: v.score
         })).sort((a,b)=>b.score - a.score);
@@ -313,7 +311,7 @@ class PredictionEngine {
             score: n.score
         }));
 
-        // 一肖一码
+        // 7. 提取一肖一码
         const zodiacOneCode = [];
         Object.keys(CONFIG.ZODIAC_MAP).forEach(z => {
             const nums = CONFIG.ZODIAC_MAP[z];
@@ -324,13 +322,13 @@ class PredictionEngine {
             zodiacOneCode.push({ zodiac: z, num: bestNum, color: Formatter.getAttributes(bestNum).color });
         });
 
-        // 提取平码 (剔除特码)
+        // 8. 提取平码 (剔除特码前5)
         const exclude = new Set(specialTop5.map(x=>x.number));
         const normalTop6 = allSorted.filter(x=>!exclude.has(x.number)).slice(0, 6).map(n => ({
             number: n.number, zodiac: Formatter.getAttributes(n.number).zodiac, color: Formatter.getAttributes(n.number).color
         }));
 
-        // 统计生肖排行
+        // 9. 统计生肖排行
         const zodiacScores = {};
         Object.keys(CONFIG.ZODIAC_MAP).forEach(z => {
             let total = 0;
@@ -339,12 +337,13 @@ class PredictionEngine {
         });
         const sortedZodiacs = Object.keys(zodiacScores).sort((a,b)=>zodiacScores[b]-zodiacScores[a]);
 
-        const bestNum = specialTop5[0].number;
+        // 10. 计算其他指标
+        const bestNum = specialTop5.length > 0 ? specialTop5[0].number : 1;
         const head = Math.floor(bestNum/10);
         const isBig = bestNum >= 25;
         const isOdd = bestNum % 2 !== 0;
 
-        // 构造返回对象
+        // 11. 构造返回对象
         return {
             nextExpect: (parseInt(lastRecord.issue)+1).toString(),
             specialNumbers: specialTop5,
@@ -361,7 +360,6 @@ class PredictionEngine {
             generatedAt: new Date().toISOString(),
             algorithmVersion: "V12.3-Node",
             algorithmUsed: algorithm,
-            // 补充 V12.3 里的字段
             knnAnalysis: { similarRecordsFound: similar ? similar.length : 0 },
             statisticalPatterns: []
         };
@@ -388,7 +386,6 @@ function parseLotteryResult(text) {
         const flatNumbers = allNums.slice(0, 6);
         const specialCode = allNums[6];
         let shengxiao = Formatter.getAttributes(specialCode).zodiac;
-        // 尝试从文本获取生肖
         for (const line of lines) {
             if (/[鼠牛虎兔龍龙蛇馬马羊猴雞鸡狗豬猪]/.test(line)) {
                 const animals = line.trim().split(/\s+/);
