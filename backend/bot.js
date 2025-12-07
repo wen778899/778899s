@@ -4,144 +4,103 @@ process.env.TZ = 'Asia/Shanghai';
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const db = require('./db');
-// 引入 V150.0 算法库
-const { parseLotteryResult, buildGlobalMatrix, runSimulationBatch, finalizePrediction } = require('./utils');
+// 引入 V12.3 引擎
+const { CONFIG, PredictionEngine, parseLotteryResult } = require('./utils');
 
-// --- 全局配置 ---
-let AUTO_SEND_ENABLED = true;
-let DEEP_CALC_DURATION = 1 * 60 * 60 * 1000; // 默认 1 小时
 const LOTTERY_API_URL = 'https://history.macaumarksix.com/history/macaujc2/y/2025'; 
-
-const BATCH_SIZE = 50000; // 单次模拟量
-
-// 核心计算任务状态
-let CALC_TASK = {
-    isRunning: false,
-    startTime: 0,
-    targetDuration: 0,
-    currentIssue: '',
-    iterations: 0,
-    historyCache: null,
-    matrixCache: null,
-    aggregatedResults: { zodiacWins: {}, numWins: {} },
-    bestPrediction: null,
-    isProcessing: false 
-};
-
 let LAST_SUCCESS_DATE = null; 
+let AUTO_SEND_ENABLED = true;
 const userStates = {};
 
-// --- 辅助函数 ---
-function safeParse(data) {
-    if (!data) return null;
-    if (typeof data === 'string') { try { return JSON.parse(data); } catch (e) { return null; } }
-    return data;
-}
+// --- HTML 渲染器 (适配 V12.3 样式) ---
+const EMOJI = CONFIG.EMOJI;
 
-function safeParseNumbers(numbersData) {
-    if (!numbersData) return [];
-    if (Array.isArray(numbersData)) return numbersData;
-    try {
-        const parsed = JSON.parse(numbersData);
-        if (Array.isArray(parsed)) return parsed;
-    } catch (e) {}
-    if (typeof numbersData === 'string') {
-        return numbersData.split(/[, ]+/).map(n => parseInt(n.trim())).filter(n => !isNaN(n));
-    }
-    return [];
-}
+function renderPreview(prediction) {
+    if (!prediction) return "❌ 预测数据为空，请重试";
 
-function getMainMenu() {
-    const autoSendIcon = AUTO_SEND_ENABLED ? '✅' : '❌';
-    return Markup.keyboard([
-        ['🔮 下期预测', '📊 历史走势'], // 移除了计算进度
-        ['⚙️ 设置时长', `${autoSendIcon} 自动推送`],
-        ['📡 手动发频道', '🗑 删除记录'],
-        ['🔄 立即抓取']
-    ]).resize();
-}
-
-function getDurationMenu() {
-    return Markup.inlineKeyboard([
-        [Markup.button.callback('⏱️ 30 分钟', 'set_dur_0.5'), Markup.button.callback('⏱️ 1 小时', 'set_dur_1')],
-        [Markup.button.callback('⏱️ 3 小时', 'set_dur_3'), Markup.button.callback('⏱️ 5 小时', 'set_dur_5')],
-        [Markup.button.callback('⏱️ 10 小时 (极限)', 'set_dur_10')]
-    ]);
-}
-
-function formatPredictionText(issue, pred, isFinal = false) {
-    const waveMap = { red: '🔴 红波', blue: '🔵 蓝波', green: '🟢 绿波' };
-    const emojiMap = { red: '🔴', blue: '🔵', green: '🟢' };
+    const zodiacMain = prediction.zodiac?.main || [];
+    const zodiacGuard = prediction.zodiac?.guard || [];
     
-    let title = isFinal 
-        ? `🏁 第 ${issue} 期 最终决策 (V150.0)` 
-        : `🧠 第 ${issue} 期 进化博弈中...`;
-    
-    const safeJoin = (arr) => arr ? arr.join(' ') : '?';
-
-    let zodiacGrid = '⏳ 计算中...';
-    if (pred.zodiac_one_code && Array.isArray(pred.zodiac_one_code)) {
-        let lines = [];
-        for(let i=0; i<pred.zodiac_one_code.length; i+=4) {
-            lines.push(pred.zodiac_one_code.slice(i, i+4).map(item => 
-                `${item.zodiac}${String(item.num).padStart(2,'0')}${emojiMap[item.color]||''}`
-            ).join('  '));
+    // 一肖一码
+    let zodiacBestDisplay = "暂无数据";
+    if (prediction.zodiac_one_code && Array.isArray(prediction.zodiac_one_code)) {
+        const lines = [];
+        for (let i = 0; i < prediction.zodiac_one_code.length; i += 4) {
+            const lineContent = prediction.zodiac_one_code.slice(i, i + 4).map(item => {
+                return `${item.zodiac}:${String(item.num).padStart(2,'0')}${EMOJI[item.color] || ""}`;
+            }).join("  ");
+            lines.push(lineContent);
         }
-        zodiacGrid = lines.join('\n');
+        zodiacBestDisplay = lines.join("\n");
     }
 
-    let normalStr = '⏳';
-    if (pred.normal_numbers) normalStr = pred.normal_numbers.map(n => `${String(n.num).padStart(2,'0')}(${n.zodiac})`).join('  ');
+    // 特码前五
+    let specialDisplay = "暂无数据";
+    if (prediction.specialNumbers && Array.isArray(prediction.specialNumbers)) {
+        specialDisplay = prediction.specialNumbers.map((num, idx) => 
+            `${idx+1}. ${num.number}(${num.zodiac}${EMOJI[num.color]||''})`
+        ).join("\n");
+    }
 
-    let specialStr = '⏳';
-    if (pred.special_numbers) specialStr = pred.special_numbers.map(n => `${String(n.num).padStart(2,'0')}${emojiMap[n.color]||''}`).join('  ');
+    // 平码
+    let normalDisplay = "暂无数据";
+    if (prediction.normalNumbers && Array.isArray(prediction.normalNumbers)) {
+        normalDisplay = prediction.normalNumbers.map(num => 
+            `${num.number}(${num.zodiac}${EMOJI[num.color]||''})`
+        ).join("  ");
+    }
 
-    const killInfo = (pred.kill_zodiacs && pred.kill_zodiacs.length > 0) ? `\n🚫 **绝杀三肖**: ${pred.kill_zodiacs.join(' ')}` : '';
-    const tailsStr = (pred.rec_tails && Array.isArray(pred.rec_tails)) ? pred.rec_tails.join('.') : '?';
-    const headStr = (pred.hot_head !== undefined) ? `主 ${pred.hot_head} 头 | 防 ${pred.fang_head} 头` : '?';
-
-    // 状态栏显示进度
-    let statusLine = "";
-    if (isFinal) {
-        statusLine = `✅ 计算完成 | 总模拟: ${(CALC_TASK.iterations/10000).toFixed(1)}万次`;
-    } else {
-        // 计算时间进度百分比
-        const now = Date.now();
-        const elapsed = now - CALC_TASK.startTime;
-        const total = CALC_TASK.targetDuration;
-        const pct = total > 0 ? Math.min(100, ((elapsed / total) * 100)).toFixed(1) : 0;
-        const timeLeft = Math.ceil((total - elapsed) / 60000);
-        
-        statusLine = `🔄 进度: ${pct}% (剩 ${timeLeft} 分)\n🧬 进化代数: ${(CALC_TASK.iterations/10000).toFixed(1)}万代`;
+    // 增强分析信息
+    let advancedInfo = "";
+    if (prediction.knnAnalysis && prediction.knnAnalysis.similarRecordsFound > 0) {
+        advancedInfo += `\n${EMOJI.knn} <b>KNN分析</b>: 找到 ${prediction.knnAnalysis.similarRecordsFound} 条相似历史`;
     }
 
     return `
-${title}
-━━━━━━━━━━━━━━
-🐭 **一肖一码 (全阵)**
-${zodiacGrid}
+${EMOJI.fire} <b>${CONFIG.SYSTEM.NAME} - 预测结果</b>
+${EMOJI.crown} <b>增强算法 (V12.3 Node)</b>
+第 <b>${prediction.nextExpect}</b> 期
+────────────────
 
-💎 **精选平码 (六码)**
-${normalStr}
+${EMOJI.star} <b>生肖推荐</b>
+主推: ${zodiacMain.join(" ") || "暂无"}
+防守: ${zodiacGuard.join(" ") || "暂无"}
 
-⭐ **特码前五 (高分)**
-${specialStr}
+${EMOJI.diamond} <b>波色参考</b>
+主${EMOJI[prediction.color?.main] || ""} / 防${EMOJI[prediction.color?.guard] || ""}
 
-🔥 **五肖中特**
-${safeJoin(pred.liu_xiao)} (主: ${safeJoin(pred.zhu_san)})
+${EMOJI.rocket} <b>特码参考</b>
+${specialDisplay}
 
-🔢 **围捕数据**
-头数：${headStr}
-尾数：${tailsStr} 尾
-波色：${waveMap[pred.zhu_bo]} (防${waveMap[pred.fang_bo]})
-形态：${pred.da_xiao} / ${pred.dan_shuang}${killInfo}
-━━━━━━━━━━━━━━
-${statusLine}
+<b>精选平码</b>
+${normalDisplay}
+
+────────────────
+<b>${EMOJI.trophy} 一肖一码</b>
+${zodiacBestDisplay}
+
+────────────────
+${EMOJI.target} <b>形态分析</b>
+头数: ${prediction.head} | 形态: ${prediction.shape}${advancedInfo}
+
+${EMOJI.chart_up} <b>置信度</b>: ${prediction.confidence}%
+${EMOJI.clock} <b>生成时间</b>: ${new Date().toLocaleTimeString('zh-CN')}
+${EMOJI.memory} <b>历史样本</b>: ${prediction.totalHistoryRecords} 期
 `.trim();
 }
 
+function getMainMenu() {
+    return Markup.keyboard([
+        ['🔮 下期预测 (增强版)', '📊 历史走势'],
+        ['📡 手动发频道', '🔄 立即抓取'],
+        ['🗑 删除记录']
+    ]).resize();
+}
+
+// 格式化开奖播报
 function formatLotteryResult(issue, numbers, special, shengxiao) {
-    const nums = safeParseNumbers(numbers);
+    let nums = [];
+    try { nums = JSON.parse(numbers); } catch(e) { nums = numbers.split(',').map(Number); }
     const flatStr = nums.map(n => String(n).padStart(2,'0')).join(' ');
     const specStr = String(special).padStart(2,'0');
     return `
@@ -153,42 +112,18 @@ function formatLotteryResult(issue, numbers, special, shengxiao) {
 `;
 }
 
-// --- 核心：启动任务 ---
-async function startCalculationTask(issue, historyRows) {
-    CALC_TASK = {
-        isRunning: true,
-        startTime: Date.now(),
-        targetDuration: DEEP_CALC_DURATION,
-        currentIssue: issue,
-        iterations: 0,
-        historyCache: historyRows,
-        matrixCache: buildGlobalMatrix(historyRows),
-        aggregatedResults: { zodiacWins: {}, numWins: {} },
-        bestPrediction: null,
-        isProcessing: false
-    };
-    
-    // 冷启动预测
-    const initialPred = finalizePrediction({ zodiacWins: {}, numWins: {} }, historyRows); 
-    const jsonPred = JSON.stringify(initialPred);
-    await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, issue]);
-    CALC_TASK.bestPrediction = initialPred;
-
-    console.log(`[Task] 启动 V150.0: 第 ${issue} 期`);
-}
-
 // --- 自动抓取 ---
-async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
+async function fetchAndProcessLottery(bot, ADMIN_ID) {
     try {
         console.log(`[Fetch] 请求 API...`);
         const res = await axios.get(LOTTERY_API_URL, { timeout: 20000 });
-        
-        if (res.data && res.data.code === 200 && res.data.data && Array.isArray(res.data.data)) {
+        if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
             const list = res.data.data;
             let newCount = 0;
             let latestIssue = "";
             let latestResult = null;
             
+            // 倒序遍历，确保旧数据先入库
             for (let i = list.length - 1; i >= 0; i--) {
                 const item = list[i];
                 const issue = item.expect;
@@ -206,244 +141,136 @@ async function fetchAndProcessLottery(bot, ADMIN_ID, isManual = false) {
                     INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date)
                     VALUES (?, ?, ?, ?, NOW())
                 `, [issue, jsonNums, specialCode, shengxiao]);
-
-                console.log(`[Fetch] 补录: 第 ${issue} 期`);
+                
                 newCount++;
-                if (i === 0) {
-                    latestIssue = issue;
-                    latestResult = { numbers: jsonNums, special: specialCode, shengxiao: shengxiao };
-                }
+                // 记录最新一期的数据用于播报
+                if (i === 0) { latestIssue = issue; latestResult = {numbers:jsonNums, special:specialCode, shengxiao}; }
             }
 
             if (newCount > 0) {
-                const [allHistory] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
-                
-                if (AUTO_SEND_ENABLED && process.env.CHANNEL_ID && latestResult) {
-                    const resultMsg = formatLotteryResult(latestIssue, latestResult.numbers, latestResult.special, latestResult.shengxiao);
-                    await bot.telegram.sendMessage(process.env.CHANNEL_ID, resultMsg, { parse_mode: 'Markdown' });
-                }
+                // 有新数据，生成预测并存库
+                const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+                const prediction = await PredictionEngine.generate(history, CONFIG.DEFAULT_ALGO_WEIGHTS, "advanced");
+                const jsonPred = JSON.stringify(prediction);
+                await db.execute('UPDATE lottery_results SET next_prediction=?, deep_prediction=? WHERE issue=?', [jsonPred, jsonPred, latestIssue]);
 
-                await startCalculationTask(latestIssue, allHistory);
-
-                if (ADMIN_ID) {
-                    bot.telegram.sendMessage(ADMIN_ID, `✅ 补录 ${newCount} 期，进化任务已启动。`);
+                // 推送
+                if (process.env.CHANNEL_ID) {
+                    // 1. 开奖
+                    const flatStr = JSON.parse(latestResult.numbers).map(n=>String(n).padStart(2,'0')).join(' ');
+                    const resultMsg = `🎉 <b>第 ${latestIssue} 期 开奖结果</b>\n────────────────\n平码: ${flatStr}\n特码: <b>${String(latestResult.special).padStart(2,'0')}</b> (${latestResult.shengxiao})`;
+                    await bot.telegram.sendMessage(process.env.CHANNEL_ID, resultMsg, {parse_mode:'HTML'});
+                    
+                    // 2. 预测
+                    const msg2 = renderPreview(prediction);
+                    await bot.telegram.sendMessage(process.env.CHANNEL_ID, msg2, {parse_mode:'HTML'});
                 }
+                if (ADMIN_ID) bot.telegram.sendMessage(ADMIN_ID, `✅ 补录 ${newCount} 期，预测已更新。`);
                 
-                const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
-                LAST_SUCCESS_DATE = todayStr;
-                return { success: true, isNew: true };
+                LAST_SUCCESS_DATE = new Date().toDateString();
             } else {
-                if (isManual) bot.telegram.sendMessage(ADMIN_ID, `⚠️ 数据已是最新`);
-                return { success: true, isNew: false };
+                if (ADMIN_ID) bot.telegram.sendMessage(ADMIN_ID, "⚠️ 无新数据");
             }
         }
-    } catch (e) {
-        console.error("[Fetch Error]", e.message);
-        if (isManual) bot.telegram.sendMessage(ADMIN_ID, `❌ 错误: ${e.message}`);
-    }
-    return { success: false };
+    } catch(e) { console.error(e); }
 }
 
-// --- Bot 主逻辑 ---
+// --- Start Bot ---
 function startBot() {
     const bot = new Telegraf(process.env.BOT_TOKEN);
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
-    const CHANNEL_ID = process.env.CHANNEL_ID;
-
-    // 定时器 1: 模拟循环 (50ms)
-    setInterval(async () => {
-        if (!CALC_TASK.isRunning) return;
-
-        const now = Date.now();
-        const elapsed = now - CALC_TASK.startTime;
-        const isTimeUp = elapsed >= CALC_TASK.targetDuration;
-
-        if (isTimeUp) {
-            CALC_TASK.isRunning = false;
-            try {
-                const finalPred = finalizePrediction(CALC_TASK.aggregatedResults, CALC_TASK.historyCache);
-                const jsonPred = JSON.stringify(finalPred);
-                
-                await db.execute('UPDATE lottery_results SET deep_prediction=?, next_prediction=? WHERE issue=?', 
-                    [jsonPred, jsonPred, CALC_TASK.currentIssue]);
-                
-                if (AUTO_SEND_ENABLED && CHANNEL_ID) {
-                    const nextIssue = parseInt(CALC_TASK.currentIssue) + 1;
-                    const msg = formatPredictionText(nextIssue, finalPred, true);
-                    await bot.telegram.sendMessage(CHANNEL_ID, msg, { parse_mode: 'Markdown' });
-                }
-                
-                if (ADMIN_ID) {
-                    bot.telegram.sendMessage(ADMIN_ID, `🎉 **计算完成！**\n总进化: ${(CALC_TASK.iterations/10000).toFixed(1)}万代`);
-                }
-            } catch (e) { console.error("Finalize Error:", e); }
-            return;
-        }
-
-        try {
-            if (!CALC_TASK.matrixCache) return;
-            
-            const batchResults = runSimulationBatch(CALC_TASK.historyCache, CALC_TASK.matrixCache, BATCH_SIZE);
-            
-            Object.keys(batchResults.zodiacWins).forEach(z => {
-                CALC_TASK.aggregatedResults.zodiacWins[z] = (CALC_TASK.aggregatedResults.zodiacWins[z] || 0) + batchResults.zodiacWins[z];
-            });
-            Object.keys(batchResults.numWins).forEach(n => {
-                CALC_TASK.aggregatedResults.numWins[n] = (CALC_TASK.aggregatedResults.numWins[n] || 0) + batchResults.numWins[n];
-            });
-
-            CALC_TASK.iterations += BATCH_SIZE;
-
-            if (CALC_TASK.iterations % 5000000 === 0) {
-                const tempPred = finalizePrediction(CALC_TASK.aggregatedResults, CALC_TASK.historyCache);
-                CALC_TASK.bestPrediction = tempPred;
-                const jsonPred = JSON.stringify(tempPred);
-                await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, CALC_TASK.currentIssue]);
-            }
-        } catch (e) { console.error("Sim Error:", e); }
-    }, 50);
-
-    // 定时器 2: 窗口抓取 (1分钟)
+    
+    // 定时抓取 (21:33-21:45)
     setInterval(() => {
         const now = new Date();
-        const hour = now.getUTCHours() + 8; 
+        const hour = now.getUTCHours() + 8;
         const minute = now.getUTCMinutes();
-        const todayStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }).split(',')[0];
-
         if ((hour === 21 || hour === 45) && minute >= 33 && minute <= 45) {
-             if (LAST_SUCCESS_DATE !== todayStr) fetchAndProcessLottery(bot, ADMIN_ID, false);
+             if (LAST_SUCCESS_DATE !== now.toDateString()) fetchAndProcessLottery(bot, ADMIN_ID);
         }
-    }, 60 * 1000);
+    }, 60000);
 
-    // --- 交互 ---
-    bot.hears('🔮 下期预测', async (ctx) => {
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-        if (!rows.length) return ctx.reply('暂无数据');
-        const row = rows[0];
-        let pred = CALC_TASK.isRunning ? CALC_TASK.bestPrediction : (safeParse(row.deep_prediction) || safeParse(row.next_prediction));
-        if (!pred) return ctx.reply('⏳ 正在冷启动模拟，请稍候...');
-        
-        // [修正] 增加"重新运行"按钮
-        ctx.reply(formatPredictionText(parseInt(row.issue)+1, pred, !CALC_TASK.isRunning), { 
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('🔄 刷新数据', 'refresh_pred')],
-                [Markup.button.callback('♻️ 重新运行', 'restart_task')] 
-            ])
-        });
-    });
-    
-    bot.action('refresh_pred', async (ctx) => {
+    bot.hears('🔮 下期预测 (增强版)', async (ctx) => {
         try {
             const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-            const row = rows[0];
-            let pred = CALC_TASK.isRunning ? CALC_TASK.bestPrediction : (safeParse(row.deep_prediction) || safeParse(row.next_prediction));
-            if (!pred) return ctx.answerCbQuery('计算中...');
+            if (!rows.length) return ctx.reply('无数据');
             
-            await ctx.editMessageText(formatPredictionText(parseInt(row.issue)+1, pred, !CALC_TASK.isRunning), {
-                parse_mode: 'Markdown', 
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('🔄 刷新数据', 'refresh_pred')],
-                    [Markup.button.callback('♻️ 重新运行', 'restart_task')]
-                ])
-            }).catch(()=>{});
-            ctx.answerCbQuery('已刷新');
-        } catch(e) {}
+            let pred = safeParse(rows[0].next_prediction);
+            if (!pred) {
+                ctx.reply('⏳ 正在实时计算 V12.3 增强预测...');
+                const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+                pred = await PredictionEngine.generate(history, CONFIG.DEFAULT_ALGO_WEIGHTS, "advanced");
+                // 存回去
+                const jsonPred = JSON.stringify(pred);
+                await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, rows[0].issue]);
+            }
+            
+            ctx.reply(renderPreview(pred), { parse_mode: 'HTML' });
+        } catch(e) { 
+            console.error(e);
+            ctx.reply("❌ 系统错误，请重试"); 
+        }
     });
 
-    // [新增] 重新运行按钮处理
-    bot.action('restart_task', async (ctx) => {
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-        if (!rows.length) return ctx.answerCbQuery('无数据');
-        
-        // 强制读取全量历史
-        const [allHistory] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
-        
-        // 重新启动任务
-        await startCalculationTask(rows[0].issue, allHistory);
-        
-        ctx.reply(`♻️ 已丢弃旧进度，重新启动 ${DEEP_CALC_DURATION/3600000} 小时深度进化...`);
-        ctx.answerCbQuery('任务已重置');
-    });
-
-    bot.hears('⚙️ 设置时长', (ctx) => ctx.reply(`当前时长: ${DEEP_CALC_DURATION/3600000}小时\n请选择:`, getDurationMenu()));
-    bot.action(/set_dur_([\d\.]+)/, (ctx) => {
-        const h = parseFloat(ctx.match[1]);
-        DEEP_CALC_DURATION = h * 3600000;
-        ctx.editMessageText(`✅ 时长已更新为 ${h} 小时 (下次重跑生效)`);
-    });
-
-    bot.hears(/手动发频道/, async (ctx) => {
-        if (!CHANNEL_ID) return ctx.reply('无频道ID');
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-        let pred = safeParse(rows[0].next_prediction);
-        if (!pred) return ctx.reply('无数据');
-        await bot.telegram.sendMessage(CHANNEL_ID, formatPredictionText(parseInt(rows[0].issue)+1, pred, true), {parse_mode:'Markdown'});
-        ctx.reply('已发送');
+    bot.hears('🔄 立即抓取', (ctx) => {
+        if (ctx.from.id !== ADMIN_ID) return;
+        ctx.reply('⏳ 请求中...');
+        fetchAndProcessLottery(bot, ADMIN_ID);
     });
 
     bot.hears('📊 历史走势', async (ctx) => {
-        const [rows] = await db.query('SELECT issue, numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 15');
-        let msg = '📉 **近期开奖走势**\n━━━━━━━━━━━━━━\n';
+        const [rows] = await db.query('SELECT issue, numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 10');
+        let msg = '<b>📉 近期走势</b>\n\n';
         rows.forEach(r => {
-            const nums = safeParseNumbers(r.numbers);
-            const numStr = nums.map(n => String(n).padStart(2,'0')).join(' ');
-            msg += `\`${r.issue}\`: ${numStr} + **${String(r.special_code).padStart(2,'0')}** (${r.shengxiao})\n`;
+            const nums = JSON.parse(r.numbers).map(n=>String(n).padStart(2,'0')).join(' ');
+            msg += `<b>${r.issue}</b>: ${nums} + <b>${String(r.special_code).padStart(2,'0')}</b> (${r.shengxiao})\n`;
         });
-        ctx.reply(msg, { parse_mode: 'Markdown' });
+        ctx.reply(msg, { parse_mode: 'HTML' });
     });
 
     bot.hears('🗑 删除记录', (ctx) => {
-        if (ctx.from) { userStates[ctx.from.id] = 'WAIT_DEL'; ctx.reply('请输入要删除的期号:'); }
-    });
-    
-    bot.hears(/自动推送/, (ctx) => {
-        AUTO_SEND_ENABLED = !AUTO_SEND_ENABLED;
-        ctx.reply(`自动推送: ${AUTO_SEND_ENABLED ? '✅ 开' : '❌ 关'}`, getMainMenu());
+        if(ctx.from.id===ADMIN_ID) {
+            userStates[ctx.from.id]='WAIT_DEL';
+            ctx.reply('请输入要删除的期号:');
+        }
     });
 
-    bot.hears('🔄 立即抓取', async (ctx) => {
-        if (ctx.from.id !== ADMIN_ID) return;
-        ctx.reply('⏳ 正在请求接口...');
-        await fetchAndProcessLottery(bot, ADMIN_ID, true);
-    });
-
-    // 启动
-    bot.use(async (ctx, next) => {
-        if(ctx.channelPost && String(ctx.chat.id)===String(CHANNEL_ID)) return next();
-        if(ctx.from && ctx.from.id===ADMIN_ID) return next();
-    });
-    bot.start((ctx) => { 
-        if(ctx.from) userStates[ctx.from.id]=null; 
-        ctx.reply('🤖 V150.1 Interactive Ready', getMainMenu()); 
-    });
-
-    // 监听手动录入 & 删除
-    bot.on(['text', 'channel_post'], async (ctx) => {
-        const text = ctx.message?.text || ctx.channelPost?.text;
-        if (!text) return;
-        
-        if (ctx.from && userStates[ctx.from.id]==='WAIT_DEL' && ctx.chat.type==='private') {
+    bot.on('text', async (ctx) => {
+        const text = ctx.message.text;
+        if (userStates[ctx.from.id]==='WAIT_DEL' && /^\d{7}$/.test(text)) {
             await db.execute('DELETE FROM lottery_results WHERE issue=?', [text]);
-            userStates[ctx.from.id]=null; return ctx.reply(`✅ 第 ${text} 期已删除`, getMainMenu());
-        }
-
-        const res = parseLotteryResult(text);
-        if (res) {
-            const {issue, flatNumbers, specialCode, shengxiao} = res;
-            const jsonNums = JSON.stringify(flatNumbers);
-            
-            await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())`, 
-                [issue, jsonNums, specialCode, shengxiao]);
-            
-            const [historyRows] = await db.query('SELECT numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC');
-            ctx.reply(`✅ 手动录入成功，启动进化...`);
-            startCalculationTask(issue, historyRows);
+            userStates[ctx.from.id]=null;
+            ctx.reply(`✅ 第 ${text} 期已删除`);
+        } else if (parseLotteryResult(text)) {
+             const res = parseLotteryResult(text);
+             // 手动录入...
+             const {issue, flatNumbers, specialCode, shengxiao} = res;
+             const jsonNums = JSON.stringify(flatNumbers);
+             await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())`, [issue, jsonNums, specialCode, shengxiao]);
+             
+             // 触发重算
+             const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+             const pred = await PredictionEngine.generate(history, CONFIG.DEFAULT_ALGO_WEIGHTS, "advanced");
+             const jsonPred = JSON.stringify(pred);
+             await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, issue]);
+             ctx.reply('✅ 手动录入成功，预测已更新');
         }
     });
 
-    bot.launch().catch(err => console.error("Bot Launch Error:", err));
-    process.once('SIGINT', ()=>bot.stop()); process.once('SIGTERM', ()=>bot.stop());
+    // 启动保护
+    (async () => {
+        try {
+            await bot.launch();
+            console.log('🤖 V12.3 Node Port Ready');
+        } catch (e) {
+            console.error('❌ Bot launch failed:', e);
+        }
+    })();
+    
+    // 优雅退出
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
     return bot;
 }
 
