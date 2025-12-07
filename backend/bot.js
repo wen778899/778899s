@@ -1,10 +1,18 @@
 // 核心修复：强制 Node.js 进程使用北京时间
 process.env.TZ = 'Asia/Shanghai';
 
+// --- [新增] 全局异常捕获，防止 Bot 崩溃退出 ---
+process.on('uncaughtException', (err) => {
+    console.error('🔥 Uncaught Exception:', err);
+    // 不要退出进程，保持服务运行
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🔥 Unhandled Rejection:', reason);
+});
+
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const db = require('./db');
-// 引入 V12.3 引擎 (注意这里的解构)
 const { CONFIG, PredictionEngine, parseLotteryResult } = require('./utils');
 
 const LOTTERY_API_URL = 'https://history.macaumarksix.com/history/macaujc2/y/2025'; 
@@ -12,10 +20,9 @@ let LAST_SUCCESS_DATE = null;
 let AUTO_SEND_ENABLED = true;
 const userStates = {};
 
-// --- HTML 渲染器 (适配 V12.3 样式) ---
-// 确保从 CONFIG 中获取 EMOJI
 const EMOJI = CONFIG.EMOJI;
 
+// --- HTML 渲染器 (增强容错) ---
 function renderPreview(prediction) {
     if (!prediction) return "❌ 预测数据为空，请重试";
 
@@ -51,7 +58,7 @@ function renderPreview(prediction) {
         ).join("  ");
     }
 
-    // 增强分析信息
+    // KNN 信息
     let advancedInfo = "";
     if (prediction.knnAnalysis && prediction.knnAnalysis.similarRecordsFound > 0) {
         advancedInfo += `\n${EMOJI.knn} <b>KNN分析</b>: 找到 ${prediction.knnAnalysis.similarRecordsFound} 条相似历史`;
@@ -59,7 +66,7 @@ function renderPreview(prediction) {
 
     return `
 ${EMOJI.fire} <b>${CONFIG.SYSTEM.NAME} - 预测结果</b>
-${EMOJI.crown} <b>增强算法 (V12.3 Node)</b>
+${EMOJI.crown} <b>增强算法 (V12.3 Stable)</b>
 第 <b>${prediction.nextExpect}</b> 期
 ────────────────
 
@@ -124,7 +131,7 @@ async function fetchAndProcessLottery(bot, ADMIN_ID) {
             let latestIssue = "";
             let latestResult = null;
             
-            // 倒序遍历，确保旧数据先入库
+            // 倒序遍历
             for (let i = list.length - 1; i >= 0; i--) {
                 const item = list[i];
                 const issue = item.expect;
@@ -148,7 +155,7 @@ async function fetchAndProcessLottery(bot, ADMIN_ID) {
             }
 
             if (newCount > 0) {
-                // 有新数据，生成预测并存库
+                // 有新数据，生成预测
                 const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
                 const prediction = await PredictionEngine.generate(history, CONFIG.DEFAULT_ALGO_WEIGHTS, "advanced");
                 const jsonPred = JSON.stringify(prediction);
@@ -156,12 +163,10 @@ async function fetchAndProcessLottery(bot, ADMIN_ID) {
 
                 // 推送
                 if (process.env.CHANNEL_ID) {
-                    // 1. 开奖
                     const flatStr = JSON.parse(latestResult.numbers).map(n=>String(n).padStart(2,'0')).join(' ');
                     const resultMsg = `🎉 <b>第 ${latestIssue} 期 开奖结果</b>\n────────────────\n平码: ${flatStr}\n特码: <b>${String(latestResult.special).padStart(2,'0')}</b> (${latestResult.shengxiao})`;
                     await bot.telegram.sendMessage(process.env.CHANNEL_ID, resultMsg, {parse_mode:'HTML'});
                     
-                    // 2. 预测
                     const msg2 = renderPreview(prediction);
                     await bot.telegram.sendMessage(process.env.CHANNEL_ID, msg2, {parse_mode:'HTML'});
                 }
@@ -180,7 +185,7 @@ function startBot() {
     const bot = new Telegraf(process.env.BOT_TOKEN);
     const ADMIN_ID = parseInt(process.env.ADMIN_ID);
     
-    // 定时抓取 (21:33-21:45)
+    // 定时抓取 (每分钟检查是否在 21:33-21:45 窗口)
     setInterval(() => {
         const now = new Date();
         const hour = now.getUTCHours() + 8;
@@ -195,13 +200,14 @@ function startBot() {
             const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
             if (!rows.length) return ctx.reply('无数据');
             
-            // 尝试解析库里的
-            let pred = safeParse(rows[0].next_prediction);
+            // 辅助解析JSON
+            const safeParseJSON = (str) => { try { return JSON.parse(str); } catch(e) { return null; } };
+
+            let pred = safeParseJSON(rows[0].next_prediction);
             if (!pred) {
                 ctx.reply('⏳ 正在实时计算 V12.3 增强预测...');
                 const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
                 pred = await PredictionEngine.generate(history, CONFIG.DEFAULT_ALGO_WEIGHTS, "advanced");
-                // 存回去
                 const jsonPred = JSON.stringify(pred);
                 await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, rows[0].issue]);
             }
@@ -223,8 +229,10 @@ function startBot() {
         const [rows] = await db.query('SELECT issue, numbers, special_code, shengxiao FROM lottery_results ORDER BY issue DESC LIMIT 10');
         let msg = '<b>📉 近期走势</b>\n\n';
         rows.forEach(r => {
-            const nums = JSON.parse(r.numbers).map(n=>String(n).padStart(2,'0')).join(' ');
-            msg += `<b>${r.issue}</b>: ${nums} + <b>${String(r.special_code).padStart(2,'0')}</b> (${r.shengxiao})\n`;
+            let nums = [];
+            try { nums = JSON.parse(r.numbers); } catch(e) { nums = r.numbers.split(','); }
+            const numStr = nums.map(n=>String(n).padStart(2,'0')).join(' ');
+            msg += `<b>${r.issue}</b>: ${numStr} + <b>${String(r.special_code).padStart(2,'0')}</b> (${r.shengxiao})\n`;
         });
         ctx.reply(msg, { parse_mode: 'HTML' });
     });
@@ -244,7 +252,6 @@ function startBot() {
             ctx.reply(`✅ 第 ${text} 期已删除`);
         } else if (parseLotteryResult(text)) {
              const res = parseLotteryResult(text);
-             // 手动录入...
              const {issue, flatNumbers, specialCode, shengxiao} = res;
              const jsonNums = JSON.stringify(flatNumbers);
              await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())`, [issue, jsonNums, specialCode, shengxiao]);
@@ -258,8 +265,17 @@ function startBot() {
         }
     });
 
-    bot.start((ctx) => ctx.reply('🤖 V12.3 Node Port Ready', getMainMenu()));
-    bot.launch();
+    // 启动保护
+    (async () => {
+        try {
+            await bot.launch();
+            console.log('🤖 V12.3 Stable Ready');
+        } catch (e) {
+            console.error('❌ Bot launch failed:', e);
+            // 自动重试
+            setTimeout(() => process.exit(1), 5000);
+        }
+    })();
     
     // 优雅退出
     process.once('SIGINT', () => bot.stop('SIGINT'));
