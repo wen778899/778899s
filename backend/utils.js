@@ -1,194 +1,215 @@
-process.env.TZ = 'Asia/Shanghai';
-
-const { Telegraf, Markup } = require('telegraf');
-const axios = require('axios');
+const express = require('express');
+const path = require('path');
 const db = require('./db');
-// 引入核心算法 (解构要准确)
-const { generatePrediction, parseLotteryResult } = require('./utils');
+const { generateDeterministicPrediction } = require('./prediction-algorithm');
 
-const LOTTERY_API_URL = 'https://history.macaumarksix.com/history/macaujc2/y/2025'; 
-let LAST_SUCCESS_DATE = null; 
-const userStates = {};
-const EMOJI = { red: "🔴", blue: "🔵", green: "🟢" };
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// 辅助：JSON解析
-function safeParse(str) { try { return JSON.parse(str); } catch(e) { return null; } }
+// 中间件
+app.use(express.static('public'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// 辅助：HTML 渲染
-function renderPreview(pred) {
-    if (!pred) return "❌ 暂无预测数据 (请录入历史)";
+// 模板引擎
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
 
-    const zodiacOneStr = pred.zodiac_one_code.map(i => 
-        `${i.zodiac}${String(i.num).padStart(2,'0')}${EMOJI[i.color]||''}`
-    ).join(' ');
+// ==================== 路由 ====================
 
-    const specialStr = pred.specialNumbers.map((n, i) => 
-        `${i+1}.${String(n.number).padStart(2,'0')}(${n.zodiac})`
-    ).join(' ');
-
-    const normalStr = pred.normalNumbers.map(n => 
-        `${String(n.number).padStart(2,'0')}`
-    ).join(' ');
-
-    return `
-🔥 <b>第 ${pred.nextExpect} 期 智能预测 (V15.0)</b>
-────────────────
-🐭 <b>一肖一码</b>
-${zodiacOneStr}
-
-⭐ <b>特码前五</b>
-${specialStr}
-
-💎 <b>精选平码</b>
-${normalStr}
-
-🔥 <b>五肖中特</b>
-${pred.zodiac.main.join(' ')} (防: ${pred.zodiac.guard.join(' ')})
-
-🚫 <b>绝杀三肖</b>: ${pred.kill_zodiacs.join(' ')}
-🔢 <b>形态</b>: ${pred.head} / ${pred.shape}
-────────────────
-✅ 基于 ${pred.totalHistoryRecords} 期历史数据
-`.trim();
-}
-
-function getMainMenu() {
-    return Markup.keyboard([
-        ['🔮 下期预测', '📊 历史走势'],
-        ['🔄 立即抓取', '🗑 删除记录']
-    ]).resize();
-}
-
-// 核心：抓取与计算
-async function fetchLottery(bot, ADMIN_ID) {
+// 首页
+app.get('/', async (req, res) => {
     try {
-        console.log('[Fetch] Checking...');
-        const res = await axios.get(LOTTERY_API_URL, { timeout: 15000 });
-        if (res.data && res.data.data && res.data.data.length > 0) {
-            const list = res.data.data;
-            let hasNew = false;
-            // 倒序入库
-            for (let i = list.length - 1; i >= 0; i--) {
-                const item = list[i];
-                const issue = item.expect;
-                const [rows] = await db.query('SELECT id FROM lottery_results WHERE issue = ?', [issue]);
-                if (rows.length > 0) continue;
-
-                const nums = item.openCode.split(',').map(Number);
-                const flat = nums.slice(0, 6);
-                const spec = nums[6];
-                // API 生肖
-                let sx = item.zodiac.split(',')[6].trim();
-                
-                await db.execute('INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())', 
-                    [issue, JSON.stringify(flat), spec, sx]);
-                
-                console.log(`[Fetch] New Issue: ${issue}`);
-                hasNew = true;
-                
-                // 触发预测 (每次新数据都重算)
-                const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
-                const pred = generatePrediction(history);
-                const jsonPred = JSON.stringify(pred);
-                await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, issue]);
-
-                // 推送
-                if (process.env.CHANNEL_ID) {
-                    const msg = renderPreview(pred);
-                    await bot.telegram.sendMessage(process.env.CHANNEL_ID, msg, { parse_mode: 'HTML' });
-                }
-            }
-            if (hasNew) LAST_SUCCESS_DATE = new Date().toDateString();
+        const [latest] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
+        const [recent] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 10');
+        const [stats] = await db.query('SELECT COUNT(*) as total, MIN(issue) as first, MAX(issue) as last FROM lottery_results');
+        
+        let prediction = null;
+        if (latest[0]?.next_prediction) {
+            prediction = JSON.parse(latest[0].next_prediction);
+        } else if (latest[0]) {
+            const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+            prediction = generateDeterministicPrediction(history);
         }
-    } catch (e) { console.error('[Fetch Error]', e.message); }
-}
-
-function startBot() {
-    const bot = new Telegraf(process.env.BOT_TOKEN);
-    const ADMIN_ID = parseInt(process.env.ADMIN_ID);
-
-    // 定时器 (每分钟)
-    setInterval(() => {
-        const now = new Date();
-        const h = now.getHours();
-        const m = now.getMinutes();
-        // 21:33 - 21:45 自动抓取
-        if ((h === 21 || h === 45) && m >= 33 && m <= 45) {
-            if (LAST_SUCCESS_DATE !== now.toDateString()) fetchLottery(bot, ADMIN_ID);
-        }
-    }, 60000);
-
-    bot.hears('🔮 下期预测', async (ctx) => {
-        try {
-            const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 1');
-            if (!rows.length) return ctx.reply('无数据');
-            
-            let pred = safeParse(rows[0].next_prediction);
-            if (!pred) {
-                const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
-                pred = generatePrediction(history);
-                await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [JSON.stringify(pred), rows[0].issue]);
-            }
-            ctx.reply(renderPreview(pred), { parse_mode: 'HTML' });
-        } catch(e) { ctx.reply("系统错误"); }
-    });
-
-    bot.hears('🔄 立即抓取', (ctx) => {
-        if (ctx.from.id !== ADMIN_ID) return;
-        ctx.reply('⏳ 请求中...');
-        fetchLottery(bot, ADMIN_ID);
-    });
-    
-    bot.hears('📊 历史走势', async (ctx) => {
-        const [rows] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 10');
-        let msg = '<b>📉 近期走势</b>\n';
-        rows.forEach(r => {
-            let nums = [];
-            try { nums = JSON.parse(r.numbers); } catch(e) { nums = r.numbers.split(','); }
-            const numStr = nums.map(n=>String(n).padStart(2,'0')).join(' ');
-            msg += `${r.issue}: ${numStr} + <b>${String(r.special_code).padStart(2,'0')}</b> (${r.shengxiao})\n`;
+        
+        res.render('index', {
+            title: '澳门六合彩智能预测系统',
+            prediction,
+            latest: latest[0],
+            recent,
+            stats: stats[0],
+            version: 'V16.0'
         });
-        ctx.reply(msg, { parse_mode: 'HTML' });
-    });
+    } catch (error) {
+        console.error('Home error:', error);
+        res.render('error', { message: '加载数据失败' });
+    }
+});
 
-    bot.hears('🗑 删除记录', (ctx) => {
-        if (ctx.from.id === ADMIN_ID) {
-            userStates[ctx.from.id] = 'WAIT_DEL';
-            ctx.reply('输入期号:');
+// 预测页面
+app.get('/prediction', async (req, res) => {
+    try {
+        const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
+        const prediction = generateDeterministicPrediction(history);
+        
+        res.json({
+            success: true,
+            data: prediction,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 历史数据
+app.get('/history', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = (page - 1) * limit;
+        
+        const [data] = await db.query(
+            'SELECT * FROM lottery_results ORDER BY issue DESC LIMIT ? OFFSET ?',
+            [limit, offset]
+        );
+        
+        const [total] = await db.query('SELECT COUNT(*) as count FROM lottery_results');
+        
+        res.json({
+            success: true,
+            data,
+            pagination: {
+                page,
+                limit,
+                total: total[0].count,
+                pages: Math.ceil(total[0].count / limit)
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 统计分析
+app.get('/stats', async (req, res) => {
+    try {
+        const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC LIMIT 100');
+        
+        if (history.length === 0) {
+            return res.json({ success: true, data: { message: '暂无数据' } });
         }
-    });
+        
+        const stats = {
+            numberFrequency: {},
+            zodiacFrequency: {},
+            patternStats: {
+                head: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 },
+                tail: {},
+                oddEven: { odd: 0, even: 0 },
+                size: { large: 0, small: 0 }
+            }
+        };
+        
+        history.forEach(record => {
+            let numbers = [];
+            try {
+                numbers = JSON.parse(record.numbers);
+            } catch {
+                numbers = record.numbers.split(',').map(Number);
+            }
+            
+            const allNumbers = [...numbers, parseInt(record.special_code)];
+            
+            allNumbers.forEach(num => {
+                // 号码频率
+                stats.numberFrequency[num] = (stats.numberFrequency[num] || 0) + 1;
+                
+                // 头尾统计
+                const head = Math.floor(num / 10);
+                const tail = num % 10;
+                stats.patternStats.head[head] = (stats.patternStats.head[head] || 0) + 1;
+                stats.patternStats.tail[tail] = (stats.patternStats.tail[tail] || 0) + 1;
+                
+                // 奇偶
+                if (num % 2 === 1) stats.patternStats.oddEven.odd++;
+                else stats.patternStats.oddEven.even++;
+                
+                // 大小
+                if (num > 24) stats.patternStats.size.large++;
+                else stats.patternStats.size.small++;
+            });
+        });
+        
+        // 热门号码
+        const hotNumbers = Object.entries(stats.numberFrequency)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 20)
+            .map(([num, count]) => ({ num: parseInt(num), count }));
+        
+        // 冷门号码
+        const coldNumbers = Object.entries(stats.numberFrequency)
+            .sort((a, b) => a[1] - b[1])
+            .slice(0, 20)
+            .map(([num, count]) => ({ num: parseInt(num), count }));
+        
+        res.json({
+            success: true,
+            data: {
+                hotNumbers,
+                coldNumbers,
+                patternStats: stats.patternStats,
+                totalRecords: history.length
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
-    bot.on('text', async (ctx) => {
-        const text = ctx.message.text;
-        if (userStates[ctx.from.id] === 'WAIT_DEL' && /^\d{7}$/.test(text)) {
-            await db.execute('DELETE FROM lottery_results WHERE issue=?', [text]);
-            userStates[ctx.from.id] = null;
-            ctx.reply('✅ 删除成功');
-        } else {
-             // 尝试解析手动录入
-             const res = parseLotteryResult(text);
-             if (res) {
-                 const {issue, flatNumbers, specialCode, shengxiao} = res;
-                 const jsonNums = JSON.stringify(flatNumbers);
-                 await db.execute(`INSERT INTO lottery_results (issue, numbers, special_code, shengxiao, open_date) VALUES (?,?,?,?,NOW())`, [issue, jsonNums, specialCode, shengxiao]);
-                 
-                 // 触发重算
-                 const [history] = await db.query('SELECT * FROM lottery_results ORDER BY issue DESC');
-                 const pred = generatePrediction(history);
-                 const jsonPred = JSON.stringify(pred);
-                 await db.execute('UPDATE lottery_results SET next_prediction=? WHERE issue=?', [jsonPred, issue]);
-                 ctx.reply('✅ 手动录入成功，预测已更新');
-             }
+// 期号查询
+app.get('/search/:issue', async (req, res) => {
+    try {
+        const issue = req.params.issue;
+        const [data] = await db.query('SELECT * FROM lottery_results WHERE issue = ?', [issue]);
+        
+        if (data.length === 0) {
+            return res.json({ success: false, error: '未找到该期号' });
         }
+        
+        res.json({ success: true, data: data[0] });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// API文档
+app.get('/api-docs', (req, res) => {
+    res.render('api-docs', {
+        title: 'API文档',
+        endpoints: [
+            { method: 'GET', path: '/api/prediction', desc: '获取最新预测' },
+            { method: 'GET', path: '/api/history?page=1&limit=20', desc: '获取历史数据' },
+            { method: 'GET', path: '/api/stats', desc: '获取统计信息' },
+            { method: 'GET', path: '/api/search/{issue}', desc: '查询指定期号' }
+        ]
     });
+});
 
-    // 增加错误捕获，防止崩
-    bot.launch().then(() => console.log('🤖 Bot Started')).catch(e => console.error('Bot Error:', e));
-    
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// 错误处理
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).render('error', { 
+        message: '服务器内部错误',
+        error: process.env.NODE_ENV === 'development' ? err : {}
+    });
+});
 
-    return bot;
-}
+app.use((req, res) => {
+    res.status(404).render('error', { message: '页面不存在' });
+});
 
-module.exports = startBot;
+// 启动服务器
+app.listen(PORT, () => {
+    console.log(`🌐 网站服务器运行在 http://localhost:${PORT}`);
+});
