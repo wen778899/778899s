@@ -16,7 +16,7 @@ function safeParse(str) { try { return JSON.parse(str); } catch(e) { return null
 
 // 辅助：HTML 渲染
 function renderPreview(pred) {
-    if (!pred) return "❌ 暂无预测数据 (请先录入历史)";
+    if (!pred) return "❌ 暂无预测数据 (请录入历史)";
 
     const zodiacOneStr = pred.zodiac_one_code.map(i => 
         `${i.zodiac}${String(i.num).padStart(2,'0')}${EMOJI[i.color]||''}`
