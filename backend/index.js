@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { autoSort } = require('./gameLogic');
+const { getCardImage } = require('./utils');
 
 const app = express();
 const PORT = process.env.PORT || 45775;
@@ -8,14 +9,16 @@ const PORT = process.env.PORT || 45775;
 app.use(cors());
 app.use(express.json());
 
-const SUITS = ['♠', '♥', '♣', '♦'];
+const SUITS = ['spades', 'hearts', 'clubs', 'diamonds'];
 const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
 function createDeck() {
     let deck = [];
-    for (let s of SUITS) {
-        for (let v of VALUES) {
-            deck.push({ suit: s, value: v });
+    for (let suit of SUITS) {
+        for (let value of VALUES) {
+            const card = { suit, value, rank: value };
+            card.image = getCardImage(card);
+            deck.push(card);
         }
     }
     return deck;

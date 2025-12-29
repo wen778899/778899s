@@ -8,13 +8,11 @@ const CARD_TYPE_NAMES = {
 
 const Card = ({ card, size = "normal" }) => {
   if (!card) return null;
-  const isRed = ['♥', '♦'].includes(card.suit);
-  const sizeClasses = size === "small" ? "w-10 h-14 text-sm" : "w-14 h-20 text-lg";
+  const sizeClasses = size === "small" ? "w-10 h-14" : "w-14 h-20";
   
   return (
-    <div className={`bg-white border rounded shadow-md flex flex-col items-center justify-center m-1 ${sizeClasses} ${isRed ? 'text-red-600' : 'text-black'}`}>
-      <span className="leading-none">{card.suit}</span>
-      <span className="font-bold leading-none">{card.value}</span>
+    <div className={`m-1 ${sizeClasses}`}>
+      <img src={`/${card.image}`} alt={`${card.rank} of ${card.suit}`} className="w-full h-full object-contain" />
     </div>
   );
 };
